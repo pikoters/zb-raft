@@ -26,14 +26,13 @@ import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
-import io.zeebe.raft.protocol.PollRequest;
-import io.zeebe.raft.protocol.PollResponse;
 import io.zeebe.transport.ClientRequest;
+import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.state.*;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
 
-public class PollController
+public class RequestController
 {
 
     private static final int TRANSITION_DEFAULT = 0;
@@ -46,14 +45,14 @@ public class PollController
     private final StateMachine<Context> stateMachine;
     private final StateMachineAgent<Context> stateMachineAgent;
 
-    public PollController(final Raft raft)
+    public RequestController(final Raft raft, RequestResponseAssistant requestResponseAssistant, String requestName)
     {
         final State<Context> opening = new OpeningState();
         final State<Context> open = new OpenState();
         final State<Context> closing = new ClosingState();
         final WaitState<Context> closed = context -> { };
 
-        stateMachine = StateMachine.<Context>builder(s -> new Context(s, raft))
+        stateMachine = StateMachine.<Context>builder(s -> new Context(s, raft, requestResponseAssistant, requestName))
             .initialState(closed)
             .from(closed).take(TRANSITION_OPEN).to(opening)
             .from(closed).take(TRANSITION_CLOSE).to(closed)
@@ -93,16 +92,16 @@ public class PollController
         @Override
         public int doWork(final Context context) throws Exception
         {
-            final PollRequest pollRequest = createPollRequest(context);
+            final BufferWriter request = createRequest(context);
 
-            final int workCount = sendPollRequestToMembers(context, pollRequest);
+            final int workCount = sendRequestToMembers(context, request);
 
             context.take(TRANSITION_DEFAULT);
 
             return workCount;
         }
 
-        protected PollRequest createPollRequest(final Context context)
+        protected BufferWriter createRequest(final Context context)
         {
             final LoggedEvent lastEvent = context.getLastEvent();
 
@@ -123,14 +122,16 @@ public class PollController
                 lastEventTerm = lastEventTermNullValue();
             }
 
-            return context.getPollRequest()
-                           .reset()
-                           .setRaft(context.getRaft())
-                           .setLastEventPosition(lastEventPosition)
-                           .setLastEventTerm(lastEventTerm);
+            return context.getRequestResponseAssistant()
+                   .createRequest(context.getRaft(), lastEventPosition, lastEventTerm);
+//            return context.getPollRequest()
+//                           .reset()
+//                           .setRaft(context.getRaft())
+//                           .setLastEventPosition(lastEventPosition)
+//                           .setLastEventTerm(lastEventTerm);
         }
 
-        protected int sendPollRequestToMembers(final Context context, final PollRequest pollRequest)
+        protected int sendRequestToMembers(final Context context, final BufferWriter pollRequest)
         {
             final Raft raft = context.getRaft();
             final Logger logger = raft.getLogger();
@@ -151,12 +152,12 @@ public class PollController
                 }
                 catch (final Exception e)
                 {
-                    logger.debug("Failed to send poll request to {}", member.getRemoteAddress(), e);
+                    logger.debug("Failed to send {} request to {}", context.getRequestName(), member.getRemoteAddress(), e);
                 }
 
             }
 
-            logger.debug("Poll request send to {} other members", memberSize);
+            logger.debug("{} request send to {} other members", context.getRequestName(), memberSize);
 
             return memberSize;
         }
@@ -177,28 +178,30 @@ public class PollController
             final Raft raft = context.getRaft();
             final Logger logger = raft.getLogger();
 
-            final int remaingClientRequests = checkPollResponses(context);
+            final int remaingClientRequests = checkResponses(context);
 
             if (context.isGranted())
             {
-                logger.debug("Poll request successful with {} votes for a quorum of {}", context.getGranted(), raft.requiredQuorum());
-                raft.becomeCandidate();
+                logger.debug("{} request successful with {} votes for a quorum of {}", context.getRequestName(), context.getGranted(), raft.requiredQuorum());
+                context.getRequestResponseAssistant().requestSuccessful(raft);
+//                raft.becomeCandidate();
                 context.take(TRANSITION_CLOSE);
             }
             else if (remaingClientRequests == 0)
             {
-                logger.debug("Poll request failed with {} votes for a quorum of {}", context.getGranted(), raft.requiredQuorum());
+                logger.debug("{} request failed with {} votes for a quorum of {}", context.getRequestName(), context.getGranted(), raft.requiredQuorum());
+                context.getRequestResponseAssistant().requestFailed(raft);
                 context.take(TRANSITION_CLOSE);
             }
 
             return 1;
         }
 
-        protected int checkPollResponses(final Context context)
+        protected int checkResponses(final Context context)
         {
             final Raft raft = context.getRaft();
             final Logger logger = raft.getLogger();
-            final PollResponse pollResponse = context.getPollResponse();
+//            final PollResponse pollResponse = context.getPollResponse();
 
             final List<ClientRequest> clientRequests = context.getClientRequests();
 
@@ -212,21 +215,27 @@ public class PollController
                     {
 
                         final DirectBuffer responseBuffer = clientRequest.get();
-                        pollResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
 
-                        // only register response from the current term
-                        if (!raft.mayStepDown(pollResponse) && raft.isTermCurrent(pollResponse))
+                        if (context.getRequestResponseAssistant().isResponseGranted(raft, responseBuffer))
                         {
-                            if (pollResponse.isGranted())
-                            {
-                                context.registerGranted();
-                            }
+                            context.registerGranted();
                         }
+
+//                        pollResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
+//
+//                        // only register response from the current term
+//                        if (!raft.mayStepDown(pollResponse) && raft.isTermCurrent(pollResponse))
+//                        {
+//                            if (pollResponse.isGranted())
+//                            {
+//                                context.registerGranted();
+//                            }
+//                        }
 
                     }
                     catch (final Exception e)
                     {
-                        logger.debug("Failed to receive poll response", e);
+                        logger.debug("Failed to receive {} response", context.getRequestName(), e);
                     }
                     finally
                     {
@@ -267,25 +276,39 @@ public class PollController
     static class Context extends SimpleStateMachineContext
     {
 
+        private final String requestName;
         private final Raft raft;
         private final BufferedLogStreamReader reader;
 
         private final List<ClientRequest> clientRequests = new ArrayList<>();
 
         private final BrokerEventMetadata metadata = new BrokerEventMetadata();
-        private final PollRequest pollRequest = new PollRequest();
-        private final PollResponse pollResponse = new PollResponse();
+        private final RequestResponseAssistant requestResponseAssistant;
 
         private int granted;
 
-        Context(final StateMachine<Context> stateMachine, final Raft raft)
+        Context(final StateMachine<Context> stateMachine,
+                final Raft raft, RequestResponseAssistant requestResponseAssistant,
+                final String requestName)
         {
             super(stateMachine);
 
             this.raft = raft;
             this.reader = new BufferedLogStreamReader(raft.getLogStream(), true);
+            this.requestResponseAssistant = requestResponseAssistant;
+            this.requestName = requestName;
 
             reset();
+        }
+
+        public RequestResponseAssistant getRequestResponseAssistant()
+        {
+            return requestResponseAssistant;
+        }
+
+        public String getRequestName()
+        {
+            return requestName;
         }
 
         @Override
@@ -297,8 +320,8 @@ public class PollController
             }
             clientRequests.clear();
 
-            pollRequest.reset();
-            pollResponse.reset();
+            requestResponseAssistant.reset();
+
             granted = 1; // always vote for self
         }
 
@@ -342,11 +365,6 @@ public class PollController
             return metadata;
         }
 
-        public PollRequest getPollRequest()
-        {
-            return pollRequest;
-        }
-
         public void registerGranted()
         {
             granted++;
@@ -355,11 +373,6 @@ public class PollController
         public boolean isGranted()
         {
             return granted >= raft.requiredQuorum();
-        }
-
-        public PollResponse getPollResponse()
-        {
-            return pollResponse;
         }
 
         public int getGranted()
