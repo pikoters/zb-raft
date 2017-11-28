@@ -27,6 +27,7 @@ import io.zeebe.raft.event.RaftConfigurationMember;
 import io.zeebe.raft.protocol.*;
 import io.zeebe.raft.state.*;
 import io.zeebe.transport.*;
+import io.zeebe.util.DeferredCommandContext;
 import io.zeebe.util.actor.Actor;
 import io.zeebe.util.buffer.BufferWriter;
 import org.agrona.DirectBuffer;
@@ -96,6 +97,8 @@ public class Raft implements Actor, ServerMessageHandler, ServerRequestHandler
     private final AppendRequest appendRequest = new AppendRequest();
     private final AppendResponse appendResponse = new AppendResponse();
 
+    private final DeferredCommandContext commandContext = new DeferredCommandContext(4);
+
     public Raft(final SocketAddress socketAddress, final LogStream logStream, final BufferingServerTransport serverTransport, final ClientTransport clientTransport, final RaftPersistentStorage persistentStorage)
     {
         this.socketAddress = socketAddress;
@@ -159,6 +162,11 @@ public class Raft implements Actor, ServerMessageHandler, ServerRequestHandler
         logger.debug("Transitioned to follower in term {}", getTerm());
     }
 
+    public void becomeFollowerAsync()
+    {
+        commandContext.runAsync(() -> becomeFollower());
+    }
+
     public void becomeCandidate()
     {
         candidateState.reset();
@@ -179,6 +187,11 @@ public class Raft implements Actor, ServerMessageHandler, ServerRequestHandler
         setVotedFor(socketAddress);
 
         logger.debug("Transitioned to candidate in term {}", getTerm());
+    }
+
+    public void becomeCandidateAsync()
+    {
+        commandContext.runAsync(() -> becomeCandidate());
     }
 
     public void becomeLeader()
@@ -204,6 +217,8 @@ public class Raft implements Actor, ServerMessageHandler, ServerRequestHandler
     public int doWork()
     {
         int workCount = 0;
+
+        workCount += commandContext.doWork();
 
         // poll for new messages
         workCount += subscriptionController.doWork();
