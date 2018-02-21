@@ -15,11 +15,6 @@
  */
 package io.zeebe.raft;
 
-import static io.zeebe.util.EnsureUtil.ensureNotNull;
-
-import java.time.Duration;
-import java.util.*;
-
 import io.zeebe.logstreams.impl.LogStreamController;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.msgpack.value.ValueArray;
@@ -30,10 +25,14 @@ import io.zeebe.raft.state.*;
 import io.zeebe.transport.*;
 import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.sched.ZbActor;
-import io.zeebe.util.sched.clock.ActorClock;
 import io.zeebe.util.sched.future.ActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
+
+import java.time.Duration;
+import java.util.*;
+
+import static io.zeebe.util.EnsureUtil.ensureNotNull;
 
 /**
  * <p>
@@ -51,6 +50,7 @@ import org.slf4j.Logger;
 public class Raft extends ZbActor implements ServerMessageHandler, ServerRequestHandler
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
+
     public static final Duration HEARTBEAT_INTERVAL = Duration.ofMillis(250);
     public static final int ELECTION_INTERVAL_MS = 1000;
     public static final Duration FLUSH_INTERVAL = Duration.ofMillis(500);
@@ -71,20 +71,21 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     private final Map<SocketAddress, RaftMember> memberLookup = new HashMap<>();
     private final List<RaftMember> members = new ArrayList<>();
     private final List<RaftStateListener> raftStateListeners = new ArrayList<>();
+    private boolean shouldElect = true;
 
     // controller
-    private final JoinController joinController;
-    private final AppendRaftEventController appendRaftEventController;
+    private JoinController joinController;
+    private AppendRaftEventController appendRaftEventController;
 
-    private final OpenLogStreamController openLogStreamController;
-    private final ReplicateLogController replicateLogController;
-    private final ConsensusRequestController pollController;
-    private final ConsensusRequestController voteController;
+    private OpenLogStreamController openLogStreamController;
+    private ReplicateLogController replicateLogController;
+    private ConsensusRequestController pollController;
+    private ConsensusRequestController voteController;
 
     // state message  handlers
-    private final FollowerState followerState;
-    private final CandidateState candidateState;
-    private final LeaderState leaderState;
+    private FollowerState followerState;
+    private CandidateState candidateState;
+    private LeaderState leaderState;
 
     // reused entities
     private final TransportMessage transportMessage = new TransportMessage();
@@ -105,21 +106,6 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         appender = new BufferedLogStorageAppender(this);
 
         this.serverTransport = serverTransport;
-
-        joinController = new JoinController(this, actor);
-        appendRaftEventController = new AppendRaftEventController(this, actor);
-
-        openLogStreamController = new OpenLogStreamController(this, actor);
-        replicateLogController = new ReplicateLogController(this, actor);
-
-        pollController = new ConsensusRequestController(this, actor, new PollRequestHandler());
-        voteController = new ConsensusRequestController(this, actor, new VoteRequestHandler());
-
-        followerState = new FollowerState(this, appender);
-        candidateState = new CandidateState(this, appender);
-        leaderState = new LeaderState(this, appender, actor);
-
-
     }
 
     public void registerRaftStateListener(final RaftStateListener listener)
@@ -211,6 +197,19 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     @Override
     protected void onActorStarted()
     {
+        joinController = new JoinController(this, actor);
+        appendRaftEventController = new AppendRaftEventController(this, actor);
+
+        openLogStreamController = new OpenLogStreamController(this, actor);
+        replicateLogController = new ReplicateLogController(this, actor);
+
+        pollController = new ConsensusRequestController(this, actor, new PollRequestHandler());
+        voteController = new ConsensusRequestController(this, actor, new VoteRequestHandler());
+
+        followerState = new FollowerState(this, appender);
+        candidateState = new CandidateState(this, appender);
+        leaderState = new LeaderState(this, appender, actor);
+
         final ActorFuture<ServerInputSubscription> openSubscriptionFuture =
             serverTransport.openSubscription("gossip", this, this);
 
@@ -237,30 +236,37 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         }
     }
 
+
+
     private void electionTimeoutCallback()
     {
-        if (getState() != RaftState.LEADER)
+        if (shouldElect)
         {
-            if (joinController.isJoined())
+            if (getState() != RaftState.LEADER)
             {
-                switch (getState())
+                if (joinController.isJoined())
                 {
-                    case FOLLOWER:
-                        LOG.debug("Triggering poll after election timeout reached");
-                        becomeFollower();
-                        // trigger a new poll immediately
-                        pollController.sendRequest();
-                        break;
-                    case CANDIDATE:
-                        LOG.debug("Triggering vote after election timeout reached");
-                        // close current vote before starting the next
-                        voteController.close();
-                        becomeCandidate();
-                        break;
+                    switch (getState())
+                    {
+                        case FOLLOWER:
+                            LOG.debug("Triggering poll after election timeout reached");
+                            becomeFollower();
+                            // trigger a new poll immediately
+                            pollController.sendRequest();
+                            break;
+                        case CANDIDATE:
+                            LOG.debug("Triggering vote after election timeout reached");
+                            // close current vote before starting the next
+                            voteController.close();
+                            becomeCandidate();
+                            break;
+                    }
                 }
+                actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
             }
-            actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
+
+        shouldElect = true;
     }
 
     private void flushTimeoutCallback()
@@ -270,6 +276,11 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
             appender.flushBufferedEvents();
             actor.runDelayed(FLUSH_INTERVAL, this::flushTimeoutCallback);
         }
+    }
+
+    public void skipNextElection()
+    {
+        shouldElect = false;
     }
 
     /**

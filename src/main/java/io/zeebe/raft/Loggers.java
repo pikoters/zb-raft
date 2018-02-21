@@ -20,5 +20,5 @@ import org.slf4j.LoggerFactory;
 
 public class Loggers
 {
-    public static Logger RAFT_LOGGER = LoggerFactory.getLogger("io.zeebe.raft");
+    public static final Logger RAFT_LOGGER = LoggerFactory.getLogger("io.zeebe.raft");
 }

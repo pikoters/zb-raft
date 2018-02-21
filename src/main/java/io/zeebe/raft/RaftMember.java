@@ -15,18 +15,15 @@
  */
 package io.zeebe.raft;
 
-import static io.zeebe.raft.AppendRequestEncoder.previousEventPositionNullValue;
-import static io.zeebe.raft.AppendRequestEncoder.previousEventTermNullValue;
-
 import io.zeebe.logstreams.impl.LoggedEventImpl;
 import io.zeebe.logstreams.impl.log.index.LogBlockIndex;
 import io.zeebe.logstreams.log.BufferedLogStreamReader;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.transport.RemoteAddress;
-import io.zeebe.util.sched.ActorCondition;
-import io.zeebe.util.sched.channel.ActorConditions;
-import io.zeebe.util.sched.channel.ConsumableChannel;
+
+import static io.zeebe.raft.AppendRequestEncoder.previousEventPositionNullValue;
+import static io.zeebe.raft.AppendRequestEncoder.previousEventTermNullValue;
 
 public class RaftMember
 {

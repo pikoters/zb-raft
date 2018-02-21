@@ -37,7 +37,7 @@ public class FollowerState extends AbstractRaftState
     @Override
     public void appendRequest(final AppendRequest appendRequest)
     {
-        raft.resetElectionTimeout();
+        raft.skipNextElection();
         raft.mayStepDown(appendRequest);
 
         final long previousEventPosition = appendRequest.getPreviousEventPosition();
