@@ -15,7 +15,6 @@
  */
 package io.zeebe.raft.controller;
 
-import io.zeebe.logstreams.log.LogStreamFailureListener;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.RaftEvent;
 import io.zeebe.raft.protocol.JoinResponse;
@@ -109,9 +108,6 @@ public class AppendRaftEventController
         public int doWork(final Context context) throws Exception
         {
             // make sure we were unregistered before
-            context.unregisterFailureListener();
-
-            context.registerFailureListener();
 
             context.take(TRANSITION_DEFAULT);
 
@@ -175,7 +171,7 @@ public class AppendRaftEventController
                 workCount++;
                 context.take(TRANSITION_DEFAULT);
             }
-            else if (context.isAppendFailed())
+            else
             {
                 logger.debug("Failed to append initial event in position {}", context.getPosition());
 
@@ -207,7 +203,6 @@ public class AppendRaftEventController
                 // send response
                 context.acceptJoinRequest();
 
-                context.unregisterFailureListener();
                 context.take(TRANSITION_DEFAULT);
             }
 
@@ -217,7 +212,7 @@ public class AppendRaftEventController
     }
 
 
-    static class Context extends SimpleStateMachineContext implements LogStreamFailureListener
+    static class Context extends SimpleStateMachineContext
     {
 
         private final Raft raft;
@@ -226,7 +221,6 @@ public class AppendRaftEventController
         private final JoinResponse joinResponse = new JoinResponse();
 
         private long position;
-        private long failedPosition;
 
         // response state
         private ServerOutput serverOutput;
@@ -247,7 +241,6 @@ public class AppendRaftEventController
             raftEvent.reset();
 
             resetPosition();
-            unregisterFailureListener();
         }
 
         public Raft getRaft()
@@ -275,37 +268,9 @@ public class AppendRaftEventController
             return position >= 0 && position <= raft.getLogStream().getCommitPosition();
         }
 
-        public boolean isAppendFailed()
-        {
-            return position >= 0 && failedPosition >= 0 && position >= failedPosition;
-        }
-
-        public void registerFailureListener()
-        {
-            raft.getLogStream().registerFailureListener(this);
-        }
-
-        public void unregisterFailureListener()
-        {
-            raft.getLogStream().removeFailureListener(this);
-        }
-
         public void resetPosition()
         {
             position = -1;
-            failedPosition = -1;
-        }
-
-        @Override
-        public void onFailed(final long failedPosition)
-        {
-            this.failedPosition = failedPosition;
-        }
-
-        @Override
-        public void onRecovered()
-        {
-            // ignore
         }
 
         public void setServerOutput(final ServerOutput serverOutput)

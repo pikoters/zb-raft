@@ -15,18 +15,15 @@
  */
 package io.zeebe.raft.util;
 
-import static io.zeebe.raft.state.RaftState.LEADER;
-import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
-import static io.zeebe.util.buffer.BufferUtil.wrapString;
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.nio.file.Files;
-import java.util.*;
-import java.util.stream.Collectors;
-
-import io.zeebe.dispatcher.*;
+import io.zeebe.dispatcher.Dispatcher;
+import io.zeebe.dispatcher.Dispatchers;
+import io.zeebe.dispatcher.FragmentHandler;
+import io.zeebe.dispatcher.Subscription;
 import io.zeebe.logstreams.LogStreams;
-import io.zeebe.logstreams.log.*;
+import io.zeebe.logstreams.log.BufferedLogStreamReader;
+import io.zeebe.logstreams.log.LogStream;
+import io.zeebe.logstreams.log.LogStreamWriterImpl;
+import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.Raft;
@@ -35,17 +32,29 @@ import io.zeebe.raft.event.RaftConfiguration;
 import io.zeebe.raft.event.RaftConfigurationMember;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
-import io.zeebe.transport.*;
+import io.zeebe.transport.BufferingServerTransport;
+import io.zeebe.transport.ClientTransport;
+import io.zeebe.transport.SocketAddress;
+import io.zeebe.transport.Transports;
 import io.zeebe.util.actor.ActorReference;
-import io.zeebe.util.actor.ActorScheduler;
 import org.agrona.DirectBuffer;
 import org.junit.rules.ExternalResource;
+
+import java.nio.file.Files;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static io.zeebe.raft.state.RaftState.LEADER;
+import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
+import static io.zeebe.util.buffer.BufferUtil.wrapString;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class RaftRule extends ExternalResource implements RaftStateListener
 {
 
     public static final FragmentHandler NOOP_FRAGMENT_HANDLER = (buffer, offset, length, streamId, isMarkedFailed) -> FragmentHandler.CONSUME_FRAGMENT_RESULT;
 
+    private final io.zeebe.util.sched.testing.ActorSchedulerRule zbActorSchedulerRule;
     protected final ActorSchedulerRule actorSchedulerRule;
     protected final SocketAddress socketAddress;
     protected final String topicName;
@@ -74,9 +83,10 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     protected final List<RaftState> raftStateChanges = new ArrayList<>();
 
-    public RaftRule(final ActorSchedulerRule actorSchedulerRule, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
+    public RaftRule(final ActorSchedulerRule actorSchedulerRule, io.zeebe.util.sched.testing.ActorSchedulerRule zbActorSchedulerRule, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
     {
         this.actorSchedulerRule = actorSchedulerRule;
+        this.zbActorSchedulerRule = zbActorSchedulerRule;
         this.socketAddress = new SocketAddress(host, port);
         this.topicName = topicName;
         this.partition = partition;
@@ -87,41 +97,40 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     protected void before() throws Throwable
     {
         final String name = socketAddress.toString();
-        final ActorScheduler actorScheduler = actorSchedulerRule.getActorScheduler();
 
         serverSendBuffer =
             Dispatchers.create("serverSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender")
-                       .actorScheduler(actorScheduler)
+                       .actorScheduler(zbActorSchedulerRule.get())
                        .build();
 
         serverReceiveBuffer =
             Dispatchers.create("serverReceiveBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender")
-                       .actorScheduler(actorScheduler)
+                       .actorScheduler(zbActorSchedulerRule.get())
                        .build();
 
         serverTransport =
             Transports.newServerTransport()
                       .sendBuffer(serverSendBuffer)
                       .bindAddress(socketAddress.toInetSocketAddress())
-                      .scheduler(actorScheduler)
+                      .scheduler(zbActorSchedulerRule.get())
                       .buildBuffering(serverReceiveBuffer);
 
         clientSendBuffer =
             Dispatchers.create("clientSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender")
-                       .actorScheduler(actorScheduler)
+                       .actorScheduler(zbActorSchedulerRule.get())
                        .build();
 
         clientTransport =
             Transports.newClientTransport()
                       .sendBuffer(clientSendBuffer)
                       .requestPoolSize(128)
-                      .scheduler(actorScheduler)
+                      .scheduler(zbActorSchedulerRule.get())
                       .build();
 
         logStream =
@@ -129,7 +138,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                       .deleteOnClose(true)
                       .logDirectory(Files.createTempDirectory("raft-test-" + socketAddress.port() + "-").toString())
                       .logStreamControllerDisabled(true)
-                      .actorScheduler(actorScheduler)
+                      .actorScheduler(zbActorSchedulerRule.get())
                       .build();
 
         logStream.open();
@@ -231,7 +240,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     public void clearSubscription()
     {
         final String subscriptionName = raft.getSubscriptionName();
-        final Subscription subscription = serverReceiveBuffer.getSubscriptionByName(subscriptionName);
+        final Subscription subscription = serverReceiveBuffer.getSubscription(subscriptionName);
         subscription.poll(NOOP_FRAGMENT_HANDLER, Integer.MAX_VALUE);
     }
 

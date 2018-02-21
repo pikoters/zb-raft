@@ -30,9 +30,10 @@ public class RaftTwoNodesTest
 {
 
     public ActorSchedulerRule actorScheduler = new ActorSchedulerRule();
+    public io.zeebe.util.sched.testing.ActorSchedulerRule zbActorScheduler = new io.zeebe.util.sched.testing.ActorSchedulerRule();
 
-    public RaftRule raft1 = new RaftRule(actorScheduler, "localhost", 8001, "default", 0);
-    public RaftRule raft2 = new RaftRule(actorScheduler, "localhost", 8002, "default", 0, raft1);
+    public RaftRule raft1 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8001, "default", 0);
+    public RaftRule raft2 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8002, "default", 0, raft1);
 
     @Rule
     public RaftClusterRule cluster = new RaftClusterRule(actorScheduler, raft1, raft2);

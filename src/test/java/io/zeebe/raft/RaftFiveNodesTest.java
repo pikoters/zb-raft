@@ -31,12 +31,13 @@ public class RaftFiveNodesTest
 {
 
     public ActorSchedulerRule actorScheduler = new ActorSchedulerRule();
+    public io.zeebe.util.sched.testing.ActorSchedulerRule zbActorScheduler = new io.zeebe.util.sched.testing.ActorSchedulerRule();
 
-    public RaftRule raft1 = new RaftRule(actorScheduler, "localhost", 8001, "default", 0);
-    public RaftRule raft2 = new RaftRule(actorScheduler, "localhost", 8002, "default", 0, raft1);
-    public RaftRule raft3 = new RaftRule(actorScheduler, "localhost", 8003, "default", 0, raft2);
-    public RaftRule raft4 = new RaftRule(actorScheduler, "localhost", 8004, "default", 0, raft2, raft3);
-    public RaftRule raft5 = new RaftRule(actorScheduler, "localhost", 8005, "default", 0, raft3);
+    public RaftRule raft1 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8001, "default", 0);
+    public RaftRule raft2 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8002, "default", 0, raft1);
+    public RaftRule raft3 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8003, "default", 0, raft2);
+    public RaftRule raft4 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8004, "default", 0, raft2, raft3);
+    public RaftRule raft5 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8005, "default", 0, raft3);
 
     @Rule
     public RaftClusterRule cluster = new RaftClusterRule(actorScheduler, raft1, raft2, raft3, raft4, raft5);

@@ -15,11 +15,10 @@
  */
 package io.zeebe.raft.controller;
 
-import java.util.concurrent.CompletableFuture;
-
 import io.zeebe.raft.Raft;
 import io.zeebe.transport.BufferingServerTransport;
 import io.zeebe.transport.ServerInputSubscription;
+import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.state.SimpleStateMachineContext;
 import io.zeebe.util.state.State;
 import io.zeebe.util.state.StateMachine;
@@ -66,7 +65,8 @@ public class SubscriptionController
         {
             final Raft raft = context.getRaft();
 
-            final CompletableFuture<ServerInputSubscription> future = context.getServerTransport().openSubscription(raft.getSubscriptionName(), raft, raft);
+            final ActorFuture<ServerInputSubscription> future =
+                context.getServerTransport().openSubscription(raft.getSubscriptionName(), raft, raft);
 
             context.setFuture(future);
             context.take(TRANSITION_DEFAULT);
@@ -84,7 +84,7 @@ public class SubscriptionController
         {
             int workCount = 0;
 
-            final CompletableFuture<ServerInputSubscription> future = context.getFuture();
+            final ActorFuture<ServerInputSubscription> future = context.getFuture();
             if (future.isDone())
             {
                 workCount++;
@@ -128,7 +128,7 @@ public class SubscriptionController
         private final Raft raft;
         private final BufferingServerTransport serverTransport;
 
-        private CompletableFuture<ServerInputSubscription> future;
+        private ActorFuture<ServerInputSubscription> future;
         private ServerInputSubscription subscription;
 
         Context(final StateMachine<?> stateMachine, final Raft raft, final BufferingServerTransport serverTransport)
@@ -157,12 +157,12 @@ public class SubscriptionController
             return serverTransport;
         }
 
-        public CompletableFuture<ServerInputSubscription> getFuture()
+        public ActorFuture<ServerInputSubscription> getFuture()
         {
             return future;
         }
 
-        public void setFuture(final CompletableFuture<ServerInputSubscription> future)
+        public void setFuture(final ActorFuture<ServerInputSubscription> future)
         {
             this.future = future;
         }

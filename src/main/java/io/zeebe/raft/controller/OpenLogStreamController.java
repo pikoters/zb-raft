@@ -15,12 +15,10 @@
  */
 package io.zeebe.raft.controller;
 
-import java.util.concurrent.CompletableFuture;
-
 import io.zeebe.logstreams.log.LogStream;
-import io.zeebe.logstreams.log.LogStreamFailureListener;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
+import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.state.*;
 import org.slf4j.Logger;
 
@@ -157,7 +155,7 @@ public class OpenLogStreamController
             int workCount = 0;
 
             final Logger logger = context.getRaft().getLogger();
-            final CompletableFuture<Void> future = context.getFuture();
+            final ActorFuture<Void> future = context.getFuture();
 
             if (future.isDone())
             {
@@ -166,7 +164,6 @@ public class OpenLogStreamController
                 try
                 {
                     future.get();
-                    context.registerFailureListener();
                     context.take(TRANSITION_DEFAULT);
                 }
                 catch (final Exception e)
@@ -239,7 +236,7 @@ public class OpenLogStreamController
                 workCount++;
                 context.take(TRANSITION_DEFAULT);
             }
-            else if (context.isAppendFailed())
+            else
             {
                 logger.debug("Failed to append initial event in position {}", context.getPosition());
 
@@ -306,7 +303,7 @@ public class OpenLogStreamController
             int workCount = 0;
 
             final Logger logger = context.getRaft().getLogger();
-            final CompletableFuture<Void> future = context.getFuture();
+            final ActorFuture<Void> future = context.getFuture();
 
             if (future.isDone())
             {
@@ -360,16 +357,15 @@ public class OpenLogStreamController
 
     }
 
-    static class Context extends SimpleStateMachineContext implements LogStreamFailureListener
+    static class Context extends SimpleStateMachineContext
     {
 
         private final Raft raft;
 
         private final InitialEvent initialEvent = new InitialEvent();
 
-        private CompletableFuture<Void> future;
+        private ActorFuture<Void> future;
         private long position;
-        private long failedPosition;
         private long retries;
 
         Context(final StateMachine<Context> stateMachine, final Raft raft)
@@ -387,10 +383,7 @@ public class OpenLogStreamController
 
             future = null;
             position = -1;
-            failedPosition = -1;
             retries = 10;
-
-            unregisterFailureListener();
         }
 
         public Raft getRaft()
@@ -398,12 +391,12 @@ public class OpenLogStreamController
             return raft;
         }
 
-        public void setFuture(final CompletableFuture<Void> future)
+        public void setFuture(final ActorFuture<Void> future)
         {
             this.future = future;
         }
 
-        public CompletableFuture<Void> getFuture()
+        public ActorFuture<Void> getFuture()
         {
             return future;
         }
@@ -428,37 +421,9 @@ public class OpenLogStreamController
             return position >= 0 && position <= raft.getLogStream().getCommitPosition();
         }
 
-        public boolean isAppendFailed()
-        {
-            return position >= 0 && failedPosition >= 0 && position >= failedPosition;
-        }
-
-        public void registerFailureListener()
-        {
-            raft.getLogStream().registerFailureListener(this);
-        }
-
-        public void unregisterFailureListener()
-        {
-            raft.getLogStream().removeFailureListener(this);
-        }
-
         public void resetPosition()
         {
             position = -1;
-            failedPosition = -1;
-        }
-
-        @Override
-        public void onFailed(final long failedPosition)
-        {
-            this.failedPosition = failedPosition;
-        }
-
-        @Override
-        public void onRecovered()
-        {
-            // ignore
         }
 
         public long getPosition()

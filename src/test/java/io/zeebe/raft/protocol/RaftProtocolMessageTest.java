@@ -37,8 +37,10 @@ public class RaftProtocolMessageTest
 {
 
     public static ActorSchedulerRule actorScheduler = new ActorSchedulerRule();
-    public static RaftRule raft1 = new RaftRule(actorScheduler, "localhost", 8001, "test", 123);
-    public static RaftRule raft2 = new RaftRule(actorScheduler, "localhost", 8002, "test", 123, raft1);
+    public static io.zeebe.util.sched.testing.ActorSchedulerRule zbActorScheduler = new io.zeebe.util.sched.testing.ActorSchedulerRule();
+
+    public static RaftRule raft1 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8001, "test", 123);
+    public static RaftRule raft2 = new RaftRule(actorScheduler, zbActorScheduler, "localhost", 8002, "test", 123, raft1);
 
     @ClassRule
     public static RaftClusterRule cluster = new RaftClusterRule(actorScheduler, raft1, raft2);
