@@ -24,6 +24,9 @@ import io.zeebe.logstreams.log.BufferedLogStreamReader;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.transport.RemoteAddress;
+import io.zeebe.util.sched.ActorCondition;
+import io.zeebe.util.sched.channel.ActorConditions;
+import io.zeebe.util.sched.channel.ConsumableChannel;
 
 public class RaftMember
 {
@@ -31,7 +34,6 @@ public class RaftMember
     private final LogStream logStream;
     private final BufferedLogStreamReader reader;
 
-    private long heartbeat;
     private boolean failures;
 
     private long matchPosition;
@@ -77,16 +79,6 @@ public class RaftMember
         return previousTerm;
     }
 
-    public long getHeartbeat()
-    {
-        return heartbeat;
-    }
-
-    public void setHeartbeat(final long heartbeat)
-    {
-        this.heartbeat = heartbeat;
-    }
-
     public void failure()
     {
         failures = true;
@@ -114,9 +106,8 @@ public class RaftMember
         return event;
     }
 
-    public void reset(final long nextHeartbeat)
+    public void reset()
     {
-        setHeartbeat(nextHeartbeat);
         resetFailures();
         setPreviousEventToEndOfLog();
     }
@@ -135,6 +126,11 @@ public class RaftMember
         {
             return null;
         }
+    }
+
+    public boolean hasNextEvent()
+    {
+        return bufferedEvent != null || reader.hasNext();
     }
 
     public void resetToPosition(final long eventPosition)

@@ -15,6 +15,7 @@
  */
 package io.zeebe.raft.state;
 
+import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.BufferedLogStorageAppender;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
@@ -23,13 +24,18 @@ import io.zeebe.raft.protocol.JoinRequest;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.transport.ServerOutput;
 import io.zeebe.transport.SocketAddress;
+import io.zeebe.util.sched.ActorControl;
+
+import java.util.Arrays;
 
 public class LeaderState extends AbstractRaftState
 {
+    private final ActorControl actor;
 
-    public LeaderState(final Raft raft, final BufferedLogStorageAppender appender)
+    public LeaderState(final Raft raft, final BufferedLogStorageAppender appender, ActorControl actorControl)
     {
         super(raft, appender);
+        this.actor = actorControl;
     }
 
     @Override
@@ -80,6 +86,7 @@ public class LeaderState extends AbstractRaftState
                 {
                     member.setMatchPosition(eventPosition);
                     member.resetFailures();
+                    actor.submit(this::commit);
                 }
                 else
                 {
@@ -87,6 +94,35 @@ public class LeaderState extends AbstractRaftState
                     member.resetToPosition(eventPosition);
                 }
             }
+        }
+    }
+
+    private void commit()
+    {
+        final int memberSize = raft.getMemberSize();
+
+        final long[] positions = new long[memberSize + 1];
+        for (int i = 0; i < memberSize; i++)
+        {
+            positions[i] = raft.getMember(i).getMatchPosition();
+        }
+
+        // TODO(menski): `raft.getLogStream().getCurrentAppenderPosition()` is wrong as the current appender
+        // position is the next position which is written. This means in a single node cluster the log
+        // already committed an event which will be written in the future. `- 1` is a hotfix for this.
+        // see https://github.com/zeebe-io/zeebe/issues/501
+        positions[memberSize] = raft.getLogStream().getCurrentAppenderPosition() - 1;
+
+        Arrays.sort(positions);
+
+        final long commitPosition = positions[memberSize + 1 - raft.requiredQuorum()];
+        final long initialEventPosition = raft.getInitialEventPosition();
+
+        final LogStream logStream = raft.getLogStream();
+
+        if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
+        {
+            logStream.setCommitPosition(commitPosition);
         }
     }
 }

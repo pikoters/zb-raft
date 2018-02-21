@@ -19,123 +19,81 @@ import io.zeebe.logstreams.impl.LoggedEventImpl;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendRequest;
-import io.zeebe.util.state.*;
-import io.zeebe.util.time.ClockUtil;
+import io.zeebe.util.sched.ActorCondition;
+import io.zeebe.util.sched.ActorControl;
 
 public class ReplicateLogController
 {
+    private final Raft raft;
 
-    private static final int TRANSITION_DEFAULT = 0;
-    private static final int TRANSITION_OPEN = 1;
-    private static final int TRANSITION_CLOSE = 2;
+    private final AppendRequest appendRequest = new AppendRequest();
+    private final ActorControl actor;
+    private final ActorCondition actorCondition;
+    private boolean isOpen;
 
-    private static final StateMachineCommand<Context> OPEN_COMMAND = context -> context.take(TRANSITION_OPEN);
-    private static final StateMachineCommand<Context> CLOSE_COMMAND = context -> context.take(TRANSITION_CLOSE);
-
-    private final StateMachineAgent<Context> stateMachineAgent;
-
-    public ReplicateLogController(final Raft raft)
+    public ReplicateLogController(final Raft raft, ActorControl actorControl)
     {
-        final State<Context> opening = new OpeningState();
-        final State<Context> open = new OpenState();
-        final WaitState<Context> closed = context -> { };
+        this.raft = raft;
+        this.actor = actorControl;
 
-        final StateMachine<Context> stateMachine = StateMachine.<Context>builder(s -> new Context(s, raft))
-            .initialState(closed)
-            .from(closed).take(TRANSITION_OPEN).to(opening)
-            .from(closed).take(TRANSITION_CLOSE).to(closed)
-            .from(opening).take(TRANSITION_DEFAULT).to(open)
-            .from(open).take(TRANSITION_OPEN).to(open)
-            .from(open).take(TRANSITION_CLOSE).to(closed)
-            .build();
-
-        stateMachineAgent = new LimitedStateMachineAgent<>(stateMachine);
-    }
-
-    public int doWork()
-    {
-        return stateMachineAgent.doWork();
-    }
-
-    public void reset()
-    {
-        stateMachineAgent.reset();
+        actorCondition = actor.onCondition("raft-event-append", this::sendAppendRequest);
     }
 
     public void open()
     {
-        stateMachineAgent.addCommand(OPEN_COMMAND);
-    }
-
-    public void close()
-    {
-        stateMachineAgent.addCommand(CLOSE_COMMAND);
-    }
-
-    static class OpeningState implements State<Context>
-    {
-
-        @Override
-        public int doWork(final Context context) throws Exception
+        final int memberSize = raft.getMemberSize();
+        for (int i = 0; i < memberSize; i++)
         {
-            final Raft raft = context.getRaft();
-
-            final long nextHeartbeat = raft.nextHeartbeat();
-
-            final int memberSize = raft.getMemberSize();
-
-            for (int i = 0; i < memberSize; i++)
-            {
-                raft.getMember(i).reset(nextHeartbeat);
-            }
-
-            context.take(TRANSITION_DEFAULT);
-
-            return memberSize;
+            raft.getMember(i).reset();
         }
 
-        @Override
-        public boolean isInterruptable()
-        {
-            return false;
-        }
-
+        actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
+        isOpen = true;
+        raft.getLogStream().getLogStorage().registerOnAppendCondition(actorCondition);
     }
 
-    static class OpenState implements State<Context>
+    private void heartBeat()
     {
-
-        @Override
-        public int doWork(final Context context) throws Exception
+        if (isOpen)
         {
-            int workCount = 0;
-
-            final Raft raft = context.getRaft();
-
-            final long now = ClockUtil.getCurrentTimeInMillis();
-            final long nextHeartbeat = raft.nextHeartbeat();
-
-            final AppendRequest appendRequest = context.getAppendRequest().reset().setRaft(raft);
-
             final int memberSize = raft.getMemberSize();
-
             for (int i = 0; i < memberSize; i++)
             {
                 final RaftMember member = raft.getMember(i);
-                final boolean heartbeatRequired = member.getHeartbeat() <= now;
+                appendRequest.reset().setRaft(raft);
 
+                appendRequest
+                    .setPreviousEventPosition(member.getPreviousPosition())
+                    .setPreviousEventTerm(member.getPreviousTerm());
+
+                raft.sendMessage(member.getRemoteAddress(), appendRequest);
+            }
+
+            actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
+        }
+    }
+
+    // TODO check if heatbeat is triggered on executing send append request
+    private void sendAppendRequest()
+    {
+        final int memberSize = raft.getMemberSize();
+
+        boolean hasNext;
+        do
+        {
+            hasNext = false;
+            for (int i = 0; i < memberSize; i++)
+            {
+                final RaftMember member = raft.getMember(i);
                 LoggedEventImpl event = null;
-
                 if (!member.hasFailures())
                 {
                     event = member.getNextEvent();
                 }
 
-                if (event != null || heartbeatRequired)
+                if (event != null)
                 {
-                    workCount++;
-
-                    member.setHeartbeat(nextHeartbeat);
+                    appendRequest.reset().setRaft(raft);
 
                     appendRequest
                         .setPreviousEventPosition(member.getPreviousPosition())
@@ -144,56 +102,25 @@ public class ReplicateLogController
 
                     final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
 
-                    if (event != null)
+                    if (sent)
                     {
-                        if (sent)
-                        {
-                            member.setPreviousEvent(event);
-                        }
-                        else
-                        {
-                            member.setBufferedEvent(event);
-                        }
+                        member.setPreviousEvent(event);
+                    }
+                    else
+                    {
+                        member.setBufferedEvent(event);
                     }
                 }
 
+                hasNext |= member.hasNextEvent();
             }
-
-            return workCount;
-        }
-
+        } while (hasNext);
     }
 
-    static class Context extends SimpleStateMachineContext
+    public void close()
     {
-
-        private final Raft raft;
-
-        private final AppendRequest appendRequest = new AppendRequest();
-
-        Context(final StateMachine<Context> stateMachine, final Raft raft)
-        {
-            super(stateMachine);
-            this.raft = raft;
-
-            reset();
-        }
-
-        @Override
-        public void reset()
-        {
-            appendRequest.reset();
-        }
-
-        public Raft getRaft()
-        {
-            return raft;
-        }
-
-        public AppendRequest getAppendRequest()
-        {
-            return appendRequest;
-        }
-
+        isOpen = false;
+        raft.getLogStream().getLogStorage().removeOnAppendCondition(actorCondition);
     }
+
 }

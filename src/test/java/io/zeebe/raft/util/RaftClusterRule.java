@@ -121,7 +121,7 @@ public class RaftClusterRule implements TestRule
 
     public void awaitLogControllerOpen(final RaftRule raft)
     {
-        awaitCondition(() -> raft.getLogStream().getLogStreamController() != null, "Failed to wait for %s to open log stream controller", raft);
+        awaitCondition(() -> raft.getLogStream().getLogStreamController() != null, "Failed to wait for %s to appendEvent log stream controller", raft);
     }
 
     public void awaitEventCommitted(final RaftRule raftToWait, final long position, final int term, final String message)
