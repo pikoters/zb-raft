@@ -27,6 +27,7 @@ import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.Raft;
+import io.zeebe.raft.RaftPersistentStorage;
 import io.zeebe.raft.RaftStateListener;
 import io.zeebe.raft.event.RaftConfiguration;
 import io.zeebe.raft.event.RaftConfigurationMember;
@@ -97,14 +98,14 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         serverSendBuffer =
             Dispatchers.create("serverSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
-                       .subscriptions("sender")
+                       .subscriptions("sender-" + name)
                        .actorScheduler(actorSchedulerRule.get())
                        .build();
 
         serverReceiveBuffer =
             Dispatchers.create("serverReceiveBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
-                       .subscriptions("sender")
+                       .subscriptions("sender-" + name)
                        .actorScheduler(actorSchedulerRule.get())
                        .build();
 
@@ -118,7 +119,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         clientSendBuffer =
             Dispatchers.create("clientSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
-                       .subscriptions("sender")
+                       .subscriptions("sender-" + name)
                        .actorScheduler(actorSchedulerRule.get())
                        .build();
 
@@ -141,7 +142,13 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
 
-        raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage);
+        raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage) {
+            @Override
+            public String getName()
+            {
+                return socketAddress.toString();
+            }
+        };
         raft.registerRaftStateListener(this);
 
         raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));

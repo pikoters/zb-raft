@@ -29,7 +29,7 @@ import java.time.Duration;
 public class OpenLogStreamController
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
-    public static final Duration COMMIT_TIMEOUT = Duration.ofSeconds(15);
+    public static final Duration COMMIT_TIMEOUT = Duration.ofMinutes(15);
 
     private final ActorControl actor;
     private final Raft raft;
@@ -37,7 +37,7 @@ public class OpenLogStreamController
     private final ActorCondition actorCondition;
 
     private long position;
-    private long retries;
+    private long retries = 10;
     private boolean isCommited;
 
     public OpenLogStreamController(final Raft raft, ActorControl actorControl)
@@ -65,6 +65,7 @@ public class OpenLogStreamController
             {
                 if (throwable == null)
                 {
+                    retries = 10;
                     actor.submit(this::appendInitialEvent);
                 }
                 else
@@ -84,7 +85,7 @@ public class OpenLogStreamController
     private void appendInitialEvent()
     {
         final long position = initialEvent.tryWrite(raft);
-        if (this.position >= 0)
+        if (position >= 0)
         {
             this.position = position;
 
@@ -130,6 +131,7 @@ public class OpenLogStreamController
                 LOG.warn("Failed to close log stream controller", throwable);
             }
         }));
+        retries = 10;
     }
 
     public boolean isPositionCommited()

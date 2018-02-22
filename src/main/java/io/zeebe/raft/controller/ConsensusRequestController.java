@@ -84,11 +84,20 @@ public class ConsensusRequestController
 
     protected void sendRequestToMembers(final BufferWriter pollRequest)
     {
+        // always vote for yourself
+        granted = 1;
         final String requestName = consensusRequestHandler.requestName();
         final int memberSize = raft.getMemberSize();
         final CompletableActorFuture<Void> grantedFuture = new CompletableActorFuture<>();
 
-        sendRequestToMembers(pollRequest, requestName, memberSize, grantedFuture);
+        if (memberSize == 0)
+        {
+            grantedFuture.complete(null);
+        }
+        else
+        {
+            sendRequestToMembers(pollRequest, requestName, memberSize, grantedFuture);
+        }
 
         actor.runOnCompletion(grantedFuture, ((aVoid, throwable) ->
         {
@@ -150,7 +159,11 @@ public class ConsensusRequestController
 
     public void close()
     {
-        reader.close();
+        if (reader != null)
+        {
+            reader.close();
+            reader = null;
+        }
     }
 
     public LoggedEvent getLastEvent()

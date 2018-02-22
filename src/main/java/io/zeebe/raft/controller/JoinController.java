@@ -103,6 +103,7 @@ public class JoinController
         }
         else
         {
+            LOG.debug("Joined single node cluster.");
             isJoined = true;
         }
     }

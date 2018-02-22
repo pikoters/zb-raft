@@ -16,7 +16,9 @@
 package io.zeebe.raft.state;
 
 import io.zeebe.logstreams.log.LogStream;
+import io.zeebe.logstreams.spi.LogStorage;
 import io.zeebe.raft.BufferedLogStorageAppender;
+import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendResponse;
@@ -24,18 +26,37 @@ import io.zeebe.raft.protocol.JoinRequest;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.transport.ServerOutput;
 import io.zeebe.transport.SocketAddress;
+import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
+import org.slf4j.Logger;
 
 import java.util.Arrays;
 
 public class LeaderState extends AbstractRaftState
 {
+    private static final Logger LOG = Loggers.RAFT_LOGGER;
     private final ActorControl actor;
+
+    private ActorCondition appendCondition;
+    private LogStorage logStorage;
 
     public LeaderState(final Raft raft, final BufferedLogStorageAppender appender, ActorControl actorControl)
     {
         super(raft, appender);
         this.actor = actorControl;
+        logStorage = raft.getLogStream().getLogStorage();
+    }
+
+    @Override
+    public void reset()
+    {
+        super.reset();
+        if (raft.getMembers().isEmpty())
+        {
+            LOG.debug("In single node cluster, we will commit on each append.");
+            appendCondition = actor.onCondition("append-condition", this::commitPositionOnSingleNode);
+            logStorage.registerOnAppendCondition(appendCondition);
+        }
     }
 
     @Override
@@ -60,6 +81,11 @@ public class LeaderState extends AbstractRaftState
                 {
                     // create new socket address object as it is stored in a map
                     raft.joinMember(serverOutput, remoteAddress, requestId, new SocketAddress(socketAddress));
+
+                    // remove condition
+                    LOG.debug("No more single node cluster, we will NOT commit on each append.");
+                    logStorage.removeOnAppendCondition(appendCondition);
+
                 }
             }
             else
@@ -119,6 +145,17 @@ public class LeaderState extends AbstractRaftState
         final long initialEventPosition = raft.getInitialEventPosition();
 
         final LogStream logStream = raft.getLogStream();
+
+        if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
+        {
+            logStream.setCommitPosition(commitPosition);
+        }
+    }
+
+    private  void commitPositionOnSingleNode()
+    {
+        final long commitPosition = raft.getLogStream().getCurrentAppenderPosition() - 1;
+        final long initialEventPosition = raft.getInitialEventPosition();
 
         if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
         {

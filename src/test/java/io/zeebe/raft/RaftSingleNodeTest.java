@@ -35,7 +35,6 @@ public class RaftSingleNodeTest
     @Rule
     public RaftClusterRule cluster = new RaftClusterRule(actorScheduler, raft1);
 
-
     @Test
     public void shouldJoinCluster()
     {

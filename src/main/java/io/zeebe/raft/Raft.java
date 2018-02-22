@@ -83,9 +83,9 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     private ConsensusRequestController voteController;
 
     // state message  handlers
-    private FollowerState followerState;
-    private CandidateState candidateState;
-    private LeaderState leaderState;
+    private final FollowerState followerState;
+    private final CandidateState candidateState;
+    private final LeaderState leaderState;
 
     // reused entities
     private final TransportMessage transportMessage = new TransportMessage();
@@ -106,6 +106,12 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         appender = new BufferedLogStorageAppender(this);
 
         this.serverTransport = serverTransport;
+
+        followerState = new FollowerState(this, appender);
+        candidateState = new CandidateState(this, appender);
+        leaderState = new LeaderState(this, appender, actor);
+
+        state = followerState;
     }
 
     public void registerRaftStateListener(final RaftStateListener listener)
@@ -151,7 +157,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         voteController.close();
 
         actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
-        actor.runAtFixedRate(FLUSH_INTERVAL, this::flushTimeoutCallback);
+        actor.runDelayed(FLUSH_INTERVAL, this::flushTimeoutCallback);
 
         notifyRaftStateListeners();
 
@@ -206,9 +212,6 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         pollController = new ConsensusRequestController(this, actor, new PollRequestHandler());
         voteController = new ConsensusRequestController(this, actor, new VoteRequestHandler());
 
-        followerState = new FollowerState(this, appender);
-        candidateState = new CandidateState(this, appender);
-        leaderState = new LeaderState(this, appender, actor);
 
         final ActorFuture<ServerInputSubscription> openSubscriptionFuture =
             serverTransport.openSubscription("gossip", this, this);
@@ -225,14 +228,14 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
             }
         });
 
-        actor.submit(joinController::join);
-
         // start as follower
         becomeFollower();
 
+        actor.submit(joinController::join);
+
         if (members.isEmpty())
         {
-            actor.run(this::electionTimeoutCallback);
+            actor.submit(this::electionTimeoutCallback);
         }
     }
 
@@ -240,6 +243,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
     private void electionTimeoutCallback()
     {
+        LOG.debug("====ELECTION====");
         if (shouldElect)
         {
             if (getState() != RaftState.LEADER)
@@ -262,6 +266,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
                             break;
                     }
                 }
+                LOG.debug("Election in state: {}", getState().name());
                 actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
             }
         }
@@ -288,18 +293,21 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
      */
     public void close()
     {
-        openLogStreamController.close();
-        replicateLogController.close();
-        pollController.close();
-        voteController.close();
+        actor.call(() ->
+        {
+            openLogStreamController.close();
+            replicateLogController.close();
+            pollController.close();
+            voteController.close();
 
-        leaderState.close();
-        followerState.close();
-        candidateState.close();
+            leaderState.close();
+            followerState.close();
+            candidateState.close();
 
-        appender.close();
+            appender.close();
 
-        getMembers().forEach(RaftMember::close);
+            getMembers().forEach(RaftMember::close);
+        }).join();
     }
 
     // message handler
@@ -557,14 +565,11 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
      */
     public void joinMember(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final SocketAddress socketAddress)
     {
-        actor.call(() ->
-        {
-            LOG.debug("New member {} joining the cluster", socketAddress);
-            addMember(socketAddress);
-            persistentStorage.save();
+        LOG.debug("New member {} joining the cluster", socketAddress);
+        addMember(socketAddress);
+        persistentStorage.save();
 
-            appendRaftEventController.appendEvent(serverOutput, remoteAddress, requestId);
-        });
+        appendRaftEventController.appendEvent(serverOutput, remoteAddress, requestId);
     }
 
     /**
