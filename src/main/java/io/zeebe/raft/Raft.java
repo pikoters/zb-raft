@@ -113,6 +113,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
         followerState.reset();
         state = followerState;
+        LOG.debug("new RAFT created.");
     }
 
     public void registerRaftStateListener(final RaftStateListener listener)
@@ -204,6 +205,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     @Override
     protected void onActorStarted()
     {
+        LOG.debug("Raft starts...");
         joinController = new JoinController(this, actor);
         appendRaftEventController = new AppendRaftEventController(this, actor);
 
@@ -243,11 +245,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     {
         if (getState() != RaftState.LEADER)
         {
-            LOG.debug("SHOULD ELECT {}", shouldElect);
             if (shouldElect)
             {
-                LOG.debug("ELECTION");
-
                 if (joinController.isJoined())
                 {
                     switch (getState())
@@ -267,7 +266,6 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
                     }
                 }
             }
-            LOG.debug("Election in state: {}", getState().name());
             actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
 

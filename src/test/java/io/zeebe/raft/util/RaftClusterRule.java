@@ -20,6 +20,7 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
+import io.zeebe.raft.Raft;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
@@ -77,12 +78,12 @@ public class RaftClusterRule implements TestRule
         return rafts;
     }
 
-    public RaftClusterRule registerRaft(final RaftRule raft)
+    public RaftClusterRule registerRaft(final RaftRule raftRule)
     {
-        raft.clearSubscription();
+        raftRule.clearSubscription();
+        raftRule.schedule();
 
-        raft.schedule();
-        this.rafts.add(raft);
+        this.rafts.add(raftRule);
 
         return this;
     }
@@ -101,7 +102,7 @@ public class RaftClusterRule implements TestRule
     {
         this.rafts.remove(raft);
 
-        raft.getRaft().close();
+        raft.close();
 
         return this;
     }

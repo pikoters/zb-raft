@@ -142,17 +142,6 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
 
-        raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage) {
-            @Override
-            public String getName()
-            {
-                return socketAddress.toString();
-            }
-        };
-        raft.registerRaftStateListener(this);
-
-        raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
-
         uncommittedReader = new BufferedLogStreamReader(logStream, true);
         committedReader = new BufferedLogStreamReader(logStream, false);
 
@@ -162,7 +151,10 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     @Override
     protected void after()
     {
-        raft.close();
+        if (raft != null)
+        {
+            raft.close();
+        }
 
         logStream.close();
 
@@ -179,7 +171,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void schedule()
     {
-        actorSchedulerRule.get().submitActor(raft);
+        actorSchedulerRule.get().submitActor(getRaft());
     }
 
     public SocketAddress getSocketAddress()
@@ -194,25 +186,20 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public int getTerm()
     {
-        return raft.getTerm();
-    }
-
-    public Raft getRaft()
-    {
-        return raft;
+        return getRaft().getTerm();
     }
 
     public RaftState getState()
     {
-        return raft.getState();
+        return getRaft().getState();
     }
 
     @Override
     public void onStateChange(final int partitionId, DirectBuffer topicName, final SocketAddress socketAddress, final RaftState raftState)
     {
-        assertThat(partitionId).isEqualTo(raft.getLogStream().getPartitionId());
-        assertThat(topicName).isEqualByComparingTo(raft.getLogStream().getTopicName());
-        assertThat(socketAddress).isEqualTo(raft.getSocketAddress());
+        assertThat(partitionId).isEqualTo(getRaft().getLogStream().getPartitionId());
+        assertThat(topicName).isEqualByComparingTo(getRaft().getLogStream().getTopicName());
+        assertThat(socketAddress).isEqualTo(getRaft().getSocketAddress());
         raftStateChanges.add(raftState);
     }
 
@@ -228,7 +215,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void clearSubscription()
     {
-        final String subscriptionName = raft.getSubscriptionName();
+        final String subscriptionName = getRaft().getSubscriptionName();
         final Subscription subscription = serverReceiveBuffer.getSubscription(subscriptionName);
         subscription.poll(NOOP_FRAGMENT_HANDLER, Integer.MAX_VALUE);
     }
@@ -404,9 +391,37 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         return false;
     }
 
+    public void close()
+    {
+        if (raft != null)
+        {
+            raft.close();
+            raft = null;
+        }
+    }
+
+    public Raft getRaft()
+    {
+        if (raft == null)
+        {
+            raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage)
+            {
+                @Override
+                public String getName()
+                {
+                    return socketAddress.toString();
+                }
+            };
+            raft.registerRaftStateListener(this);
+
+            raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
+        }
+        return raft;
+    }
+
     @Override
     public String toString()
     {
-        return raft.toString();
+        return getRaft().toString();
     }
 }
