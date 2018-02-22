@@ -213,9 +213,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         pollController = new ConsensusRequestController(this, actor, new PollRequestHandler());
         voteController = new ConsensusRequestController(this, actor, new VoteRequestHandler());
 
-
         final ActorFuture<ServerInputSubscription> openSubscriptionFuture =
-            serverTransport.openSubscription("gossip", this, this);
+            serverTransport.openSubscription(getSubscriptionName(), this, this);
 
         actor.runOnCompletion(openSubscriptionFuture, (subscription, failure) ->
         {
@@ -240,14 +239,15 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         }
     }
 
-
-
     private void electionTimeoutCallback()
     {
-        if (shouldElect)
+        if (getState() != RaftState.LEADER)
         {
-            if (getState() != RaftState.LEADER)
+            LOG.debug("SHOULD ELECT {}", shouldElect);
+            if (shouldElect)
             {
+                LOG.debug("ELECTION");
+
                 if (joinController.isJoined())
                 {
                     switch (getState())
@@ -266,9 +266,9 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
                             break;
                     }
                 }
-                LOG.debug("Election in state: {}", getState().name());
-                actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
             }
+            LOG.debug("Election in state: {}", getState().name());
+            actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
 
         shouldElect = true;
@@ -288,26 +288,30 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         shouldElect = false;
     }
 
+    @Override
+    protected void onActorClosing()
+    {
+        LOG.debug("Shutdown raft.");
+        openLogStreamController.close();
+        replicateLogController.close();
+        pollController.close();
+        voteController.close();
+
+        leaderState.close();
+        followerState.close();
+        candidateState.close();
+
+        appender.close();
+
+        getMembers().forEach(RaftMember::close);
+    }
+
     /**
      * Resets all controllers and closes appendEvent requests
      */
     public void close()
     {
-        actor.call(() ->
-        {
-            openLogStreamController.close();
-            replicateLogController.close();
-            pollController.close();
-            voteController.close();
-
-            leaderState.close();
-            followerState.close();
-            candidateState.close();
-
-            appender.close();
-
-            getMembers().forEach(RaftMember::close);
-        }).join();
+        actor.close().join();
     }
 
     // message handler

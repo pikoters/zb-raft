@@ -137,7 +137,7 @@ public class ConsensusRequestController
                     if (consensusRequestHandler.isResponseGranted(raft, responseBuffer))
                     {
                         granted++;
-                        if (isGranted())
+                        if (isGranted() && !grantedFuture.isDone())
                         {
                             grantedFuture.complete(null);
                         }
