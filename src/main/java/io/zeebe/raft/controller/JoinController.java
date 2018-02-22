@@ -85,11 +85,13 @@ public class JoinController
                         }
                         else
                         {
+                            LOG.debug("Join was not accepted!");
                             actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
                         }
                     }
                     else
                     {
+                        LOG.debug("Join response with different term.");
                         // received response from different term
                         actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
                     }

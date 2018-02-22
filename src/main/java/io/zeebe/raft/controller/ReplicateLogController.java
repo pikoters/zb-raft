@@ -19,7 +19,6 @@ import io.zeebe.logstreams.impl.LoggedEventImpl;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendRequest;
-import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 
 public class ReplicateLogController
@@ -28,15 +27,12 @@ public class ReplicateLogController
 
     private final AppendRequest appendRequest = new AppendRequest();
     private final ActorControl actor;
-    private final ActorCondition actorCondition;
     private boolean isOpen;
 
     public ReplicateLogController(final Raft raft, ActorControl actorControl)
     {
         this.raft = raft;
         this.actor = actorControl;
-
-        actorCondition = actor.onCondition("raft-event-append", this::sendAppendRequest);
     }
 
     public void open()
@@ -47,41 +43,19 @@ public class ReplicateLogController
             raft.getMember(i).reset();
         }
 
-        actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
+        actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
         isOpen = true;
-        raft.getLogStream().getLogStorage().registerOnAppendCondition(actorCondition);
     }
 
-    private void heartBeat()
+    // TODO perhaps possible to improve this
+    // only send events if available - otherwise empty heartbeat
+    public void sendAppendRequest()
     {
+
         if (isOpen)
         {
             final int memberSize = raft.getMemberSize();
-            for (int i = 0; i < memberSize; i++)
-            {
-                final RaftMember member = raft.getMember(i);
-                appendRequest.reset().setRaft(raft);
 
-                appendRequest
-                    .setPreviousEventPosition(member.getPreviousPosition())
-                    .setPreviousEventTerm(member.getPreviousTerm());
-
-                raft.sendMessage(member.getRemoteAddress(), appendRequest);
-            }
-
-            actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
-        }
-    }
-
-    // TODO check if heatbeat is triggered on executing send append request
-    private void sendAppendRequest()
-    {
-        final int memberSize = raft.getMemberSize();
-
-        boolean hasNext;
-        do
-        {
-            hasNext = false;
             for (int i = 0; i < memberSize; i++)
             {
                 final RaftMember member = raft.getMember(i);
@@ -91,17 +65,18 @@ public class ReplicateLogController
                     event = member.getNextEvent();
                 }
 
+
+                appendRequest.reset().setRaft(raft);
+
+                appendRequest
+                    .setPreviousEventPosition(member.getPreviousPosition())
+                    .setPreviousEventTerm(member.getPreviousTerm())
+                    .setEvent(event);
+
+                final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
+
                 if (event != null)
                 {
-                    appendRequest.reset().setRaft(raft);
-
-                    appendRequest
-                        .setPreviousEventPosition(member.getPreviousPosition())
-                        .setPreviousEventTerm(member.getPreviousTerm())
-                        .setEvent(event);
-
-                    final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
-
                     if (sent)
                     {
                         member.setPreviousEvent(event);
@@ -111,16 +86,14 @@ public class ReplicateLogController
                         member.setBufferedEvent(event);
                     }
                 }
-
-                hasNext |= member.hasNextEvent();
             }
-        } while (hasNext);
+            actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
+        }
     }
 
     public void close()
     {
         isOpen = false;
-        raft.getLogStream().getLogStorage().removeOnAppendCondition(actorCondition);
     }
 
 }

@@ -111,6 +111,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         candidateState = new CandidateState(this, appender);
         leaderState = new LeaderState(this, appender, actor);
 
+        followerState.reset();
         state = followerState;
     }
 
@@ -243,7 +244,6 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
     private void electionTimeoutCallback()
     {
-        LOG.debug("====ELECTION====");
         if (shouldElect)
         {
             if (getState() != RaftState.LEADER)

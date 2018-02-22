@@ -125,11 +125,6 @@ public class RaftMember
         }
     }
 
-    public boolean hasNextEvent()
-    {
-        return bufferedEvent != null || reader.hasNext();
-    }
-
     public void resetToPosition(final long eventPosition)
     {
         if (eventPosition >= 0)
