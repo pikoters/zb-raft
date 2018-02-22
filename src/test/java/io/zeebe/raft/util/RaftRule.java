@@ -26,8 +26,8 @@ import io.zeebe.logstreams.log.LogStreamWriterImpl;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
+import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftPersistentStorage;
 import io.zeebe.raft.RaftStateListener;
 import io.zeebe.raft.event.RaftConfiguration;
 import io.zeebe.raft.event.RaftConfigurationMember;
@@ -41,6 +41,7 @@ import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.DirectBuffer;
 import org.junit.rules.ExternalResource;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -93,6 +94,12 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     @Override
     protected void before() throws Throwable
     {
+        init();
+        schedule();
+    }
+
+    private void init() throws IOException
+    {
         final String name = socketAddress.toString();
 
         serverSendBuffer =
@@ -101,20 +108,6 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                        .subscriptions("sender-" + name)
                        .actorScheduler(actorSchedulerRule.get())
                        .build();
-
-        serverReceiveBuffer =
-            Dispatchers.create("serverReceiveBuffer-" + name)
-                       .bufferSize(32 * 1024 * 1024)
-                       .subscriptions("sender-" + name)
-                       .actorScheduler(actorSchedulerRule.get())
-                       .build();
-
-        serverTransport =
-            Transports.newServerTransport()
-                      .sendBuffer(serverSendBuffer)
-                      .bindAddress(socketAddress.toInetSocketAddress())
-                      .scheduler(actorSchedulerRule.get())
-                      .buildBuffering(serverReceiveBuffer);
 
         clientSendBuffer =
             Dispatchers.create("clientSendBuffer-" + name)
@@ -145,7 +138,9 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         uncommittedReader = new BufferedLogStreamReader(logStream, true);
         committedReader = new BufferedLogStreamReader(logStream, false);
 
-        schedule();
+        setupNewRaft();
+
+        raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
     }
 
     @Override
@@ -154,13 +149,16 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         if (raft != null)
         {
             raft.close();
+            raft = null;
+
+            serverTransport.close();
+
+            serverReceiveBuffer.close();
         }
 
         logStream.close();
 
-        serverTransport.close();
         serverSendBuffer.close();
-        serverReceiveBuffer.close();
 
         clientTransport.close();
         clientSendBuffer.close();
@@ -391,30 +389,57 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         return false;
     }
 
-    public void close()
+    public void closeRaft()
     {
-        if (raft != null)
+        raft.close();
+        serverTransport.close();
+        serverReceiveBuffer.close();
+        raft = null;
+    }
+
+    public void setupNewRaft()
+    {
+        Loggers.RAFT_LOGGER.error("SETUP AGAIN");
+        final String name = socketAddress.toString();
+
+        serverReceiveBuffer =
+            Dispatchers.create("serverReceiveBuffer-" + name)
+                .bufferSize(32 * 1024 * 1024)
+                .subscriptions("sender-" + name)
+                .actorScheduler(actorSchedulerRule.get())
+                .build();
+
+        serverTransport =
+            Transports.newServerTransport()
+                .sendBuffer(serverSendBuffer)
+                .bindAddress(socketAddress.toInetSocketAddress())
+                .scheduler(actorSchedulerRule.get())
+                .buildBuffering(serverReceiveBuffer);
+
+        raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage)
         {
-            raft.close();
-            raft = null;
-        }
+            @Override
+            public String getName()
+            {
+                return socketAddress.toString();
+            }
+        };
+        raft.registerRaftStateListener(this);
+
     }
 
     public Raft getRaft()
     {
         if (raft == null)
         {
-            raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage)
+            try
             {
-                @Override
-                public String getName()
-                {
-                    return socketAddress.toString();
-                }
-            };
-            raft.registerRaftStateListener(this);
-
-            raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
+                setupNewRaft();
+            }
+            catch (Exception e)
+            {
+                Loggers.RAFT_LOGGER.error("Ohoh something bad happens here...", e);
+            }
         }
         return raft;
     }
