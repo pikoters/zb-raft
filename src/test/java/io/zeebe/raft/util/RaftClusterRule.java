@@ -101,6 +101,8 @@ public class RaftClusterRule implements TestRule
     {
         this.rafts.remove(raft);
 
+        raft.getRaft().close();
+
         return this;
     }
 
