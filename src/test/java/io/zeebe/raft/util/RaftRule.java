@@ -40,6 +40,7 @@ import org.junit.rules.ExternalResource;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.TimeoutException;
@@ -90,6 +91,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     {
         this.actorSchedulerRule = actorSchedulerRule;
         this.socketAddress = new SocketAddress(host, port);
+
         this.topicName = topicName;
         this.partition = partition;
         this.members = members != null ? Arrays.asList(members) : Collections.emptyList();
@@ -440,7 +442,24 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         final RemoteAddress remoteAddress = clientTransport.registerRemoteAddress(other.getSocketAddress());
         Mockito.doReturn(false)
             .when(spyClientOutput)
-            .sendMessage(argThat(transportMessage -> transportMessage.equals(new TransportMessage().remoteAddress(remoteAddress))));
+            .sendMessage(argThat(transportMessage -> readRemoteStreamId(transportMessage) == remoteAddress.getStreamId()));
+    }
+
+    private final int readRemoteStreamId(TransportMessage transportMessage)
+    {
+        final Class<TransportMessage> transportMessageClass = TransportMessage.class;
+        int value;
+        try
+        {
+            final Field remoteStreamId = transportMessageClass.getDeclaredField("remoteStreamId");
+            remoteStreamId.setAccessible(true);
+            value = (int) remoteStreamId.get(transportMessage);
+        }
+        catch (Exception e)
+        {
+            value = -1;
+        }
+        return value;
     }
 
     public void reconnectTo(RaftRule other)
