@@ -81,7 +81,8 @@ public class RaftClusterRule implements TestRule
     {
         raft.clearSubscription();
 
-        raft.schedule();
+        raft.raft.getMembers().forEach((raftMember ->
+            raft.clientTransport.registerRemoteAddress(raftMember.getRemoteAddress().getAddress())));
         this.rafts.add(raft);
 
         return this;
@@ -101,7 +102,7 @@ public class RaftClusterRule implements TestRule
     {
         this.rafts.remove(raft);
 
-        raft.getRaft().close();
+        raft.clientTransport.interruptAllChannels();
 
         return this;
     }
