@@ -433,13 +433,14 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             .when(spyClientOutput)
             .sendRequestWithRetry(argThat(remoteAddressMatcher), any());
 
-        doReturn(CompletableActorFuture.completedExceptionally(new TimeoutException("timeout")))
+        doReturn(CompletableActorFuture.completedExceptionally(new TimeoutException("timeout to " + other.socketAddress)))
             .when(spyClientOutput)
             .sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
 
+        final RemoteAddress remoteAddress = clientTransport.registerRemoteAddress(other.getSocketAddress());
         Mockito.doReturn(false)
             .when(spyClientOutput)
-            .sendMessage(any());
+            .sendMessage(argThat(transportMessage -> transportMessage.equals(new TransportMessage().remoteAddress(remoteAddress))));
     }
 
     public void reconnectTo(RaftRule other)

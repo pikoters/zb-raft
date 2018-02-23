@@ -148,6 +148,7 @@ public class LeaderState extends AbstractRaftState
 
         if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
         {
+            LOG.debug("COMMIT on cluster node");
             logStream.setCommitPosition(commitPosition);
         }
     }
@@ -159,6 +160,7 @@ public class LeaderState extends AbstractRaftState
 
         if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
         {
+            LOG.debug("COMMIT on single node");
             logStream.setCommitPosition(commitPosition);
         }
     }

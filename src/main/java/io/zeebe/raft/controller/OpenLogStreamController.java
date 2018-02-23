@@ -59,6 +59,7 @@ public class OpenLogStreamController
         {
             final LogStream logStream = raft.getLogStream();
 
+            LOG.debug("Open log stream ctrl");
             final ActorFuture<Void> future = logStream.openLogStreamController();
 
             actor.runOnCompletion(future, ((aVoid, throwable) ->
@@ -84,11 +85,13 @@ public class OpenLogStreamController
 
     private void appendInitialEvent()
     {
+        LOG.debug("try to append init event");
         final long position = initialEvent.tryWrite(raft);
         if (position >= 0)
         {
             this.position = position;
 
+            LOG.debug("register on condition");
             raft.getLogStream().registerOnCommitPositionUpdatedCondition(actorCondition);
             actor.runDelayed(COMMIT_TIMEOUT, () ->
             {
@@ -108,6 +111,7 @@ public class OpenLogStreamController
 
     private void commited()
     {
+        LOG.debug("On commited");
         if (isPositionCommited())
         {
             LOG.debug("Initial event for term {} was committed on position {}", raft.getTerm(), position);

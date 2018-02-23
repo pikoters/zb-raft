@@ -82,7 +82,7 @@ public class RaftThreeNodesTest
         final RaftRule newLeader = cluster.awaitLeader();
         assertThat(newLeader)
             .isNotNull()
-            .isNotEqualTo(raft1);
+            .isNotEqualTo(oldLeader);
 
         // when
         cluster.awaitLogControllerOpen(newLeader);
