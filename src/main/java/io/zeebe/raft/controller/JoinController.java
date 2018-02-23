@@ -65,6 +65,7 @@ public class JoinController
             {
                 if (throwable == null)
                 {
+                    //
                     final DirectBuffer responseBuffer = clientRequest.join();
                     joinResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
                     clientRequest.close();
@@ -77,7 +78,6 @@ public class JoinController
                         if (joinResponse.isSucceeded())
                         {
                             LOG.debug("Join request was accepted in term {}", joinResponse.getTerm());
-//                            raft.skipNextElection();
                             isJoined = true;
                             // as this will not trigger a state change in raft we have to notify listeners
                             // that this raft is now in a visible state

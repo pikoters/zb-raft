@@ -113,7 +113,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
         followerState.reset();
         state = followerState;
-        LOG.debug("new RAFT {} created.", socketAddress);
+        LOG.debug("new RAFT created.");
     }
 
     public void registerRaftStateListener(final RaftStateListener listener)

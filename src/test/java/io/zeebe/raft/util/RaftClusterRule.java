@@ -78,9 +78,9 @@ public class RaftClusterRule implements TestRule
         return rafts;
     }
 
-    public RaftClusterRule registerRaft(final RaftRule raftRule )
+    public RaftClusterRule registerRaft(final RaftRule raftRule)
     {
-//        raftRule.clearSubscription();
+        raftRule.clearSubscription();
         raftRule.schedule();
 
         this.rafts.add(raftRule);
@@ -102,7 +102,7 @@ public class RaftClusterRule implements TestRule
     {
         this.rafts.remove(raft);
 
-        raft.closeRaft();
+        raft.close();
 
         return this;
     }
