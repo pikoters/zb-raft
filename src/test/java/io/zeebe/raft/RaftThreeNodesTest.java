@@ -125,39 +125,60 @@ public class RaftThreeNodesTest
         assertThat(raftStateChanges).containsExactly(RaftState.FOLLOWER, RaftState.CANDIDATE, RaftState.LEADER, RaftState.FOLLOWER);
     }
 
+    private RaftRule[] getOtherRafts(RaftRule toBeRemoved)
+    {
+        RaftRule[] all = new RaftRule[]{raft1, raft2, raft3};
+        RaftRule[] other = new RaftRule[all.length - 1];
+
+        int idx = 0;
+        for (RaftRule rule : all)
+        {
+            if (!rule.equals(toBeRemoved))
+            {
+                other[idx] = rule;
+                idx++;
+            }
+        }
+        return other;
+    }
+
     @Test
     public void shouldTruncateLog()
     {
         // given a log with two events committed
-        cluster.awaitRaftState(raft1, LEADER);
-        cluster.awaitLogControllerOpen(raft1);
+        final RaftRule oldLeader = cluster.awaitLeader();
+//        cluster.awaitRaftState(raft1, LEADER);
+        cluster.awaitLogControllerOpen(oldLeader);
+        cluster.awaitRaftEventCommittedOnAll(oldLeader.getTerm());
 
-        long position = raft1.writeEvents("foo", "bar");
-        cluster.awaitEventCommittedOnAll(position, raft1.getTerm(), "bar");
-        cluster.awaitRaftEventCommittedOnAll(raft1.getTerm());
+        long position = oldLeader.writeEvents("foo", "bar");
+        cluster.awaitEventCommittedOnAll(position, oldLeader.getTerm(), "bar");
+        cluster.awaitRaftEventCommittedOnAll(oldLeader.getTerm());
 
         // when a quorum leaves the cluster
-        cluster.removeRafts(raft2, raft3);
+        final RaftRule[] otherRafts = getOtherRafts(oldLeader);
+        cluster.removeRafts(otherRafts);
 
         // and more events are written
-        position = raft1.writeEvents("hello", "world");
+        position = oldLeader.writeEvents("hello", "world");
         cluster.awaitEventAppendedOnAll(position, raft1.getTerm(), "world");
 
         // and leader leaves cluster
-        cluster.removeRaft(raft1);
+        cluster.removeRaft(oldLeader);
 
         // and quorum returns
-        cluster.registerRafts(raft2, raft3);
+        cluster.registerRafts(otherRafts);
 
         // and a new leader writes more events
         final RaftRule newLeader = cluster.awaitLeader();
         cluster.awaitLogControllerOpen(newLeader);
+//        cluster.awaitRaftEventCommittedOnAll(newLeader.getTerm());
 
         position = newLeader.writeEvents("oh", "boy");
         cluster.awaitEventCommittedOnAll(position, newLeader.getTerm(), "boy");
 
         // and the nodes with the extended older log rejoins the cluster
-        cluster.registerRaft(raft1);
+        cluster.registerRaft(oldLeader);
 
         // then the new events are also committed on the returning nodes discarding there uncommitted events
         cluster.awaitInitialEventCommittedOnAll(newLeader.getTerm());

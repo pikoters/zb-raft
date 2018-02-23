@@ -24,6 +24,7 @@ import io.zeebe.raft.protocol.*;
 import io.zeebe.raft.state.*;
 import io.zeebe.transport.*;
 import io.zeebe.util.buffer.BufferWriter;
+import io.zeebe.util.sched.ScheduledTimer;
 import io.zeebe.util.sched.ZbActor;
 import io.zeebe.util.sched.future.ActorFuture;
 import org.agrona.DirectBuffer;
@@ -96,6 +97,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     private final VoteRequest voteRequest = new VoteRequest();
     private final AppendRequest appendRequest = new AppendRequest();
     private final AppendResponse appendResponse = new AppendResponse();
+    private ScheduledTimer electionTimer;
+    private ScheduledTimer flushTimer;
 
     public Raft(final SocketAddress socketAddress, final LogStream logStream, final BufferingServerTransport serverTransport, final ClientTransport clientTransport, final RaftPersistentStorage persistentStorage)
     {
@@ -157,12 +160,30 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         pollController.close();
         voteController.close();
 
-        actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
-        actor.runDelayed(FLUSH_INTERVAL, this::flushTimeoutCallback);
+        scheduleElectionTimer();
+        scheduleFlushTimer();
 
         notifyRaftStateListeners();
 
         LOG.debug("Transitioned to follower in term {}", getTerm());
+    }
+
+    private void scheduleFlushTimer()
+    {
+        if (flushTimer != null)
+        {
+            flushTimer.cancel();
+        }
+        flushTimer = actor.runAtFixedRate(FLUSH_INTERVAL, this::flushTimeoutCallback);
+    }
+
+    private void scheduleElectionTimer()
+    {
+        if (electionTimer != null)
+        {
+            electionTimer.cancel();
+        }
+        electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
     }
 
     public void becomeCandidate()
@@ -175,7 +196,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         pollController.close();
         voteController.sendRequest();
 
-        actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
+        scheduleElectionTimer();
+        cancelFlushTimer();
 
         setTerm(getTerm() + 1);
         setVotedFor(socketAddress);
@@ -185,10 +207,22 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         LOG.debug("Transitioned to candidate in term {}", getTerm());
     }
 
+    private void cancelFlushTimer()
+    {
+        if (flushTimer != null)
+        {
+            flushTimer.cancel();
+            flushTimer = null;
+        }
+    }
+
     public void becomeLeader()
     {
         leaderState.reset();
         state = leaderState;
+
+        cancelElectionTimer();
+        cancelFlushTimer();
 
         openLogStreamController.open();
         replicateLogController.open();
@@ -198,6 +232,15 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         notifyRaftStateListeners();
 
         LOG.debug("Transitioned to leader in term {}", getTerm());
+    }
+
+    private void cancelElectionTimer()
+    {
+        if (electionTimer != null)
+        {
+            electionTimer.cancel();
+            electionTimer = null;
+        }
     }
 
     // actor
@@ -235,6 +278,9 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
         if (members.isEmpty())
         {
+            // !!!! WE NEED TO CANCEL THE ELECTION TIMER !!!
+            // otherwise we will schedule the election twice
+            electionTimer.cancel();
             actor.submit(this::electionTimeoutCallback);
         }
     }
@@ -268,7 +314,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
                 }
             }
             LOG.debug("Election in state: {}", getState().name());
-            actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
+            electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
 
         shouldElect = true;
@@ -276,11 +322,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
     private void flushTimeoutCallback()
     {
-        if (getState() == RaftState.FOLLOWER)
-        {
-            appender.flushBufferedEvents();
-            actor.runDelayed(FLUSH_INTERVAL, this::flushTimeoutCallback);
-        }
+        appender.flushBufferedEvents();
     }
 
     public void skipNextElection()

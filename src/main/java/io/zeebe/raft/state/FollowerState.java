@@ -17,6 +17,7 @@ package io.zeebe.raft.state;
 
 import io.zeebe.logstreams.impl.LoggedEventImpl;
 import io.zeebe.raft.BufferedLogStorageAppender;
+import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.protocol.AppendRequest;
 
@@ -37,6 +38,7 @@ public class FollowerState extends AbstractRaftState
     @Override
     public void appendRequest(final AppendRequest appendRequest)
     {
+        Loggers.RAFT_LOGGER.debug("On append request from {}", appendRequest.getSocketAddress());
         raft.skipNextElection();
         raft.mayStepDown(appendRequest);
 

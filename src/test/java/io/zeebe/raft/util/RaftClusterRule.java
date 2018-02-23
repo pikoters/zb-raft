@@ -20,6 +20,7 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
+import io.zeebe.raft.Loggers;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
@@ -102,6 +103,7 @@ public class RaftClusterRule implements TestRule
     {
         this.rafts.remove(raft);
 
+        Loggers.RAFT_LOGGER.debug("Interrupt connections for {}", raft.getSocketAddress());
         raft.clientTransport.interruptAllChannels();
 
         return this;
