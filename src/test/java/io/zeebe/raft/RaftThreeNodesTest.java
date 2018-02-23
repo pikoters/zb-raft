@@ -125,23 +125,6 @@ public class RaftThreeNodesTest
         assertThat(raftStateChanges).containsExactly(RaftState.FOLLOWER, RaftState.CANDIDATE, RaftState.LEADER, RaftState.FOLLOWER);
     }
 
-    private RaftRule[] getOtherRafts(RaftRule toBeRemoved)
-    {
-        RaftRule[] all = new RaftRule[]{raft1, raft2, raft3};
-        RaftRule[] other = new RaftRule[all.length - 1];
-
-        int idx = 0;
-        for (RaftRule rule : all)
-        {
-            if (!rule.equals(toBeRemoved))
-            {
-                other[idx] = rule;
-                idx++;
-            }
-        }
-        return other;
-    }
-
     @Test
     public void shouldTruncateLog()
     {
@@ -156,7 +139,7 @@ public class RaftThreeNodesTest
         cluster.awaitRaftEventCommittedOnAll(oldLeader.getTerm());
 
         // when a quorum leaves the cluster
-        final RaftRule[] otherRafts = getOtherRafts(oldLeader);
+        final RaftRule[] otherRafts = cluster.getOtherRafts(oldLeader);
         cluster.removeRafts(otherRafts);
 
         // and more events are written

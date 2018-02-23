@@ -27,25 +27,31 @@ import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftPersistentStorage;
 import io.zeebe.raft.RaftStateListener;
 import io.zeebe.raft.event.RaftConfiguration;
 import io.zeebe.raft.event.RaftConfigurationMember;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
+import io.zeebe.util.sched.future.CompletableActorFuture;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.DirectBuffer;
 import org.junit.rules.ExternalResource;
+import org.mockito.ArgumentMatcher;
+import org.mockito.Mockito;
 
 import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 import static io.zeebe.raft.state.RaftState.LEADER;
 import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
 import static io.zeebe.util.buffer.BufferUtil.wrapString;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.*;
 
 public class RaftRule extends ExternalResource implements RaftStateListener
 {
@@ -62,6 +68,8 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     protected final BrokerEventMetadata metadata = new BrokerEventMetadata();
 
     protected ClientTransport clientTransport;
+    protected ClientOutput spyClientOutput;
+
     protected Dispatcher clientSendBuffer;
 
     protected Dispatcher serverSendBuffer;
@@ -139,7 +147,11 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
 
-        raft = new Raft(socketAddress, logStream, serverTransport, clientTransport, persistentStorage) {
+        spyClientOutput = spy(clientTransport.getOutput());
+        final ClientTransport spyClientTransport = spy(clientTransport);
+        when(spyClientTransport.getOutput()).thenReturn(spyClientOutput);
+
+        raft = new Raft(socketAddress, logStream, serverTransport, spyClientTransport, persistentStorage) {
             @Override
             public String getName()
             {
@@ -405,5 +417,37 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     public String toString()
     {
         return raft.toString();
+    }
+
+
+    public void interruptConnectionTo(RaftRule other)
+    {
+        final ClientRequest clientRequest = mock(ClientRequest.class);
+
+        final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> other.socketAddress.equals(r.getAddress());
+        doReturn(clientRequest)
+            .when(spyClientOutput)
+            .sendRequest(argThat(remoteAddressMatcher), any());
+
+        doReturn(CompletableActorFuture.completedExceptionally(new RuntimeException("connection is interrupted")))
+            .when(spyClientOutput)
+            .sendRequestWithRetry(argThat(remoteAddressMatcher), any());
+
+        doReturn(CompletableActorFuture.completedExceptionally(new TimeoutException("timeout")))
+            .when(spyClientOutput)
+            .sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
+
+        Mockito.doReturn(false)
+            .when(spyClientOutput)
+            .sendMessage(any());
+    }
+
+    public void reconnectTo(RaftRule other)
+    {
+        final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> r.getAddress().equals(other.socketAddress);
+        doCallRealMethod().when(spyClientOutput).sendRequest(argThat(r -> r.getAddress().equals(other.socketAddress)), any());
+        doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any());
+        doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
+        doCallRealMethod().when(spyClientOutput).sendMessage(any());
     }
 }

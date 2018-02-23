@@ -36,6 +36,8 @@ import java.util.function.Supplier;
 
 import static io.zeebe.protocol.clientapi.EventType.NOOP_EVENT;
 import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 
 public class RaftClusterRule implements TestRule
 {
@@ -82,8 +84,15 @@ public class RaftClusterRule implements TestRule
     {
         raft.clearSubscription();
 
-        raft.raft.getMembers().forEach((raftMember ->
-            raft.clientTransport.registerRemoteAddress(raftMember.getRemoteAddress().getAddress())));
+//        doCallRealMethod()
+//            .when(raft.spyClientOutput)
+//        .sendMessage(any());
+        rafts.forEach(raftRule ->
+        {
+            raft.reconnectTo(raftRule);
+            raftRule.reconnectTo(raft);
+        });
+
         this.rafts.add(raft);
 
         return this;
@@ -101,10 +110,23 @@ public class RaftClusterRule implements TestRule
 
     public RaftClusterRule removeRaft(final RaftRule raft)
     {
+        Loggers.RAFT_LOGGER.debug("Interrupt connections for {}", raft.getSocketAddress());
+
+//        doReturn(false)
+//            .when(raft.spyClientOutput)
+//            .sendMessage(any());
+
+        final RaftRule[] otherRafts = getOtherRafts(raft);
+        Arrays.stream(otherRafts)
+            .forEach(raftRule ->
+            {
+                raft.interruptConnectionTo(raftRule);
+                raftRule.interruptConnectionTo(raft);
+            });
+
         this.rafts.remove(raft);
 
-        Loggers.RAFT_LOGGER.debug("Interrupt connections for {}", raft.getSocketAddress());
-        raft.clientTransport.interruptAllChannels();
+//        raft.clientTransport.interruptAllChannels();
 
         return this;
     }
@@ -118,6 +140,23 @@ public class RaftClusterRule implements TestRule
 
         return this;
     }
+
+    public RaftRule[] getOtherRafts(RaftRule toBeRemoved)
+    {
+        RaftRule[] other = new RaftRule[rafts.size() - 1];
+
+        int idx = 0;
+        for (RaftRule rule : rafts)
+        {
+            if (!rule.equals(toBeRemoved))
+            {
+                other[idx] = rule;
+                idx++;
+            }
+        }
+        return other;
+    }
+
 
     public void awaitRaftState(final RaftRule raft, final RaftState state)
     {
