@@ -17,6 +17,8 @@ package io.zeebe.raft;
 
 import io.zeebe.transport.SocketAddress;
 
+import java.util.List;
+
 /**
  * Raft requires some information to be stored in persistent storage and be available
  * throughout restarts of the raft node. Additionally to the required term and voteFor
@@ -63,5 +65,7 @@ public interface RaftPersistentStorage
      * Blocks until the current state is persisted.
      */
     RaftPersistentStorage save();
+
+    List<SocketAddress> getMembers();
 
 }

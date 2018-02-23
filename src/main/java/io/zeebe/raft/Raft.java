@@ -206,6 +206,10 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     protected void onActorStarted()
     {
         LOG.debug("Raft starts...");
+
+        // need to restore members so we can rejoin cluster
+        restoreMembers(persistentStorage.getMembers());
+
         joinController = new JoinController(this, actor);
         appendRaftEventController = new AppendRaftEventController(this, actor);
 
@@ -559,7 +563,30 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
             persistentStorage.addMember(socketAddress);
         }
+    }
 
+    private void restoreMembers(List<SocketAddress> memberAddresses)
+    {
+        for (SocketAddress memberAddress : memberAddresses)
+        {
+            if (memberAddress.equals(this.socketAddress))
+            {
+                continue;
+            }
+
+            RaftMember member = getMember(socketAddress);
+
+            if (member == null)
+            {
+                final RemoteAddress remoteAddress = clientTransport.registerRemoteAddress(socketAddress);
+
+                member = new RaftMember(remoteAddress, logStream);
+                member.reset();
+
+                members.add(member);
+                memberLookup.put(socketAddress, member);
+            }
+        }
     }
 
     /**

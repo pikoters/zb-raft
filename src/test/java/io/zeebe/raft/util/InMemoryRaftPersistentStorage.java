@@ -82,6 +82,7 @@ public class InMemoryRaftPersistentStorage implements RaftPersistentStorage
         return this;
     }
 
+    @Override
     public List<SocketAddress> getMembers()
     {
         return members;
