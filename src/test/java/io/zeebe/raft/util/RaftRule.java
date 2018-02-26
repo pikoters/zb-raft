@@ -33,6 +33,8 @@ import io.zeebe.raft.event.RaftConfigurationMember;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
+import io.zeebe.util.sched.ZbActor;
+import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.DirectBuffer;
@@ -173,7 +175,9 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     @Override
     protected void after()
     {
-        raft.close();
+        final ActorFuture<Void> close = raft.close();
+
+        while (!close.isDone());
 
         logStream.close();
 

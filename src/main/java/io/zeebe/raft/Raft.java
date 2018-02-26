@@ -345,9 +345,9 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     /**
      * Resets all controllers and closes appendEvent requests
      */
-    public void close()
+    public ActorFuture<Void> close()
     {
-        actor.close().join();
+        return actor.close();
     }
 
     // message handler
