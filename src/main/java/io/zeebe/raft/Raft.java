@@ -120,12 +120,12 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
     public void registerRaftStateListener(final RaftStateListener listener)
     {
-        raftStateListeners.add(listener);
+        actor.call(() -> raftStateListeners.add(listener));
     }
 
     public void removeRaftStateListener(final RaftStateListener listener)
     {
-        raftStateListeners.remove(listener);
+        actor.call(() -> raftStateListeners.remove(listener));
     }
 
     private void notifyRaftStateListener(final RaftStateListener listener)
