@@ -24,7 +24,6 @@ import org.junit.Test;
 
 import java.util.List;
 
-import static io.zeebe.raft.state.RaftState.LEADER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class RaftThreeNodesTest

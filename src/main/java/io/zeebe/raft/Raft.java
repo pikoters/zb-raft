@@ -289,28 +289,22 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     {
         if (getState() != RaftState.LEADER)
         {
-            LOG.debug("SHOULD ELECT {}", shouldElect);
-            if (shouldElect)
+            if (shouldElect && joinController.isJoined())
             {
-                LOG.debug("ELECTION");
-
-                if (joinController.isJoined())
+                switch (getState())
                 {
-                    switch (getState())
-                    {
-                        case FOLLOWER:
-                            LOG.debug("Triggering poll after election timeout reached");
-                            becomeFollower();
-                            // trigger a new poll immediately
-                            pollController.sendRequest();
-                            break;
-                        case CANDIDATE:
-                            LOG.debug("Triggering vote after election timeout reached");
-                            // close current vote before starting the next
-                            voteController.close();
-                            becomeCandidate();
-                            break;
-                    }
+                    case FOLLOWER:
+                        LOG.debug("Triggering poll after election timeout reached");
+                        becomeFollower();
+                        // trigger a new poll immediately
+                        pollController.sendRequest();
+                        break;
+                    case CANDIDATE:
+                        LOG.debug("Triggering vote after election timeout reached");
+                        // close current vote before starting the next
+                        voteController.close();
+                        becomeCandidate();
+                        break;
                 }
             }
             LOG.debug("Election in state: {}", getState().name());

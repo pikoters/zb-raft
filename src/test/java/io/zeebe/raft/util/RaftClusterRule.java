@@ -36,8 +36,6 @@ import java.util.function.Supplier;
 
 import static io.zeebe.protocol.clientapi.EventType.NOOP_EVENT;
 import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
 
 public class RaftClusterRule implements TestRule
 {
@@ -143,7 +141,7 @@ public class RaftClusterRule implements TestRule
 
     public RaftRule[] getOtherRafts(RaftRule toBeRemoved)
     {
-        RaftRule[] other = new RaftRule[rafts.size() - 1];
+        final RaftRule[] other = new RaftRule[rafts.size() - 1];
 
         int idx = 0;
         for (RaftRule rule : rafts)

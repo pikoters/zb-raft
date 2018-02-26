@@ -445,7 +445,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             .sendMessage(argThat(transportMessage -> readRemoteStreamId(transportMessage) == remoteAddress.getStreamId()));
     }
 
-    private final int readRemoteStreamId(TransportMessage transportMessage)
+    private int readRemoteStreamId(TransportMessage transportMessage)
     {
         final Class<TransportMessage> transportMessageClass = TransportMessage.class;
         int value;
