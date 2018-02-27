@@ -15,25 +15,57 @@
  */
 package io.zeebe.raft;
 
+import static io.zeebe.util.EnsureUtil.ensureNotNull;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
 import io.zeebe.logstreams.impl.LogStreamController;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.msgpack.value.ValueArray;
-import io.zeebe.raft.controller.*;
+import io.zeebe.raft.controller.AppendRaftEventController;
+import io.zeebe.raft.controller.ConsensusRequestController;
+import io.zeebe.raft.controller.JoinController;
+import io.zeebe.raft.controller.OpenLogStreamController;
+import io.zeebe.raft.controller.PollRequestHandler;
+import io.zeebe.raft.controller.ReplicateLogController;
+import io.zeebe.raft.controller.VoteRequestHandler;
 import io.zeebe.raft.event.RaftConfigurationMember;
-import io.zeebe.raft.protocol.*;
-import io.zeebe.raft.state.*;
-import io.zeebe.transport.*;
+import io.zeebe.raft.protocol.AppendRequest;
+import io.zeebe.raft.protocol.AppendResponse;
+import io.zeebe.raft.protocol.HasPartition;
+import io.zeebe.raft.protocol.HasSocketAddress;
+import io.zeebe.raft.protocol.HasTerm;
+import io.zeebe.raft.protocol.JoinRequest;
+import io.zeebe.raft.protocol.PollRequest;
+import io.zeebe.raft.protocol.VoteRequest;
+import io.zeebe.raft.state.AbstractRaftState;
+import io.zeebe.raft.state.CandidateState;
+import io.zeebe.raft.state.FollowerState;
+import io.zeebe.raft.state.LeaderState;
+import io.zeebe.raft.state.RaftState;
+import io.zeebe.transport.BufferingServerTransport;
+import io.zeebe.transport.ClientRequest;
+import io.zeebe.transport.ClientTransport;
+import io.zeebe.transport.RemoteAddress;
+import io.zeebe.transport.ServerInputSubscription;
+import io.zeebe.transport.ServerMessageHandler;
+import io.zeebe.transport.ServerOutput;
+import io.zeebe.transport.ServerRequestHandler;
+import io.zeebe.transport.ServerResponse;
+import io.zeebe.transport.SocketAddress;
+import io.zeebe.transport.TransportMessage;
 import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.sched.ScheduledTimer;
 import io.zeebe.util.sched.ZbActor;
 import io.zeebe.util.sched.future.ActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
-
-import java.time.Duration;
-import java.util.*;
-
-import static io.zeebe.util.EnsureUtil.ensureNotNull;
 
 /**
  * <p>
@@ -54,7 +86,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
 
     public static final Duration HEARTBEAT_INTERVAL = Duration.ofMillis(250);
     public static final int ELECTION_INTERVAL_MS = 1000;
-    public static final Duration FLUSH_INTERVAL = Duration.ofMillis(500);
+    public static final Duration FLUSH_INTERVAL = Duration.ofMillis(10);
 
     // environment
     private final SocketAddress socketAddress;
