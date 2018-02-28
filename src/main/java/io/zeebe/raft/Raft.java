@@ -330,7 +330,7 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
      */
     public ActorFuture<Void> close()
     {
-        CompletableActorFuture<Void> closeFuture = new CompletableActorFuture<>();
+        final CompletableActorFuture<Void> closeFuture = new CompletableActorFuture<>();
         actor.call(() ->
         {
             LOG.debug("Shutdown raft.");

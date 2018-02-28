@@ -19,7 +19,6 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
-import io.zeebe.util.actor.Actor;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.ActorFuture;
@@ -121,7 +120,7 @@ public class OpenLogStreamController
 
     public ActorFuture<Void> close()
     {
-        CompletableActorFuture<Void> completableActorFuture = new CompletableActorFuture<>();
+        final CompletableActorFuture<Void> completableActorFuture = new CompletableActorFuture<>();
         final LogStream logStream = raft.getLogStream();
         logStream.removeOnCommitPositionUpdatedCondition(actorCondition);
         actor.runOnCompletion(logStream.closeLogStreamController(), ((aVoid, throwable) ->
