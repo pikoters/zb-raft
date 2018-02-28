@@ -19,9 +19,11 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
+import io.zeebe.util.actor.Actor;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.ActorFuture;
+import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.slf4j.Logger;
 
 import java.time.Duration;
@@ -117,21 +119,25 @@ public class OpenLogStreamController
         }
     }
 
-    public void close()
+    public ActorFuture<Void> close()
     {
+        CompletableActorFuture<Void> completableActorFuture = new CompletableActorFuture<>();
         final LogStream logStream = raft.getLogStream();
-
-        raft.getLogStream().removeOnCommitPositionUpdatedCondition(actorCondition);
-        final ActorFuture<Void> future = logStream.closeLogStreamController();
-
-        actor.runOnCompletion(future, ((aVoid, throwable) ->
+        logStream.removeOnCommitPositionUpdatedCondition(actorCondition);
+        actor.runOnCompletion(logStream.closeLogStreamController(), ((aVoid, throwable) ->
         {
             if (throwable != null)
             {
+                completableActorFuture.completeExceptionally(throwable);
                 LOG.warn("Failed to close log stream controller", throwable);
+            }
+            else
+            {
+                completableActorFuture.complete(null);
             }
         }));
         retries = 10;
+        return completableActorFuture;
     }
 
     public boolean isPositionCommited()

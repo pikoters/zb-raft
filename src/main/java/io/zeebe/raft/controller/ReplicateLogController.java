@@ -21,6 +21,7 @@ import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendRequest;
 import io.zeebe.util.sched.ActorControl;
+import io.zeebe.util.sched.ScheduledTimer;
 
 public class ReplicateLogController
 {
@@ -28,7 +29,7 @@ public class ReplicateLogController
 
     private final AppendRequest appendRequest = new AppendRequest();
     private final ActorControl actor;
-    private boolean isOpen;
+    private ScheduledTimer heartBeatTimer;
 
     public ReplicateLogController(final Raft raft, ActorControl actorControl)
     {
@@ -44,58 +45,56 @@ public class ReplicateLogController
             raft.getMember(i).reset();
         }
 
-        actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
-        isOpen = true;
+        heartBeatTimer = actor.runAtFixedRate(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
     }
 
     // TODO perhaps possible to improve this
     // only send events if available - otherwise empty heartbeat
     public void sendAppendRequest()
     {
+        final int memberSize = raft.getMemberSize();
 
-        if (isOpen)
+        for (int i = 0; i < memberSize; i++)
         {
-            final int memberSize = raft.getMemberSize();
-
-            for (int i = 0; i < memberSize; i++)
+            final RaftMember member = raft.getMember(i);
+            LoggedEventImpl event = null;
+            if (!member.hasFailures())
             {
-                final RaftMember member = raft.getMember(i);
-                LoggedEventImpl event = null;
-                if (!member.hasFailures())
+                event = member.getNextEvent();
+            }
+
+
+            appendRequest.reset().setRaft(raft);
+
+            appendRequest
+                .setPreviousEventPosition(member.getPreviousPosition())
+                .setPreviousEventTerm(member.getPreviousTerm())
+                .setEvent(event);
+
+            final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
+
+            Loggers.RAFT_LOGGER.debug("Send append request to {}, sent {}", member.getRemoteAddress().getAddress(), sent);
+            if (event != null)
+            {
+                if (sent)
                 {
-                    event = member.getNextEvent();
+                    member.setPreviousEvent(event);
                 }
-
-
-                appendRequest.reset().setRaft(raft);
-
-                appendRequest
-                    .setPreviousEventPosition(member.getPreviousPosition())
-                    .setPreviousEventTerm(member.getPreviousTerm())
-                    .setEvent(event);
-
-                final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
-
-                Loggers.RAFT_LOGGER.debug("Send append request to {}, sent {}", member.getRemoteAddress().getAddress(), sent);
-                if (event != null)
+                else
                 {
-                    if (sent)
-                    {
-                        member.setPreviousEvent(event);
-                    }
-                    else
-                    {
-                        member.setBufferedEvent(event);
-                    }
+                    member.setBufferedEvent(event);
                 }
             }
-            actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
         }
     }
 
     public void close()
     {
-        isOpen = false;
+        if (heartBeatTimer != null)
+        {
+            heartBeatTimer.cancel();
+            heartBeatTimer = null;
+        }
     }
 
 }
