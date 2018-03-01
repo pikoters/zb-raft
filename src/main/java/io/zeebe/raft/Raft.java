@@ -264,7 +264,12 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         {
             if (failure == null)
             {
-                actor.consume(subscription, () -> subscription.poll());
+                actor.consume(subscription, () -> {
+                    if (subscription.poll() == 0)
+                    {
+                        actor.yield();
+                    }
+                });
             }
             else
             {
