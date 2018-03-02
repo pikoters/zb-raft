@@ -129,7 +129,6 @@ public class RaftThreeNodesTest
     {
         // given a log with two events committed
         final RaftRule oldLeader = cluster.awaitLeader();
-//        cluster.awaitRaftState(raft1, LEADER);
         cluster.awaitLogControllerOpen(oldLeader);
         cluster.awaitRaftEventCommittedOnAll(oldLeader.getTerm());
 
