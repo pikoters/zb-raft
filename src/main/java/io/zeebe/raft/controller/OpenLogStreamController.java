@@ -73,7 +73,7 @@ public class OpenLogStreamController
                 {
                     LOG.warn("Failed to sendRequest log stream controller.r", throwable);
                     decreaseRetries();
-                    actor.run(this::open);
+                    actor.submit(this::open);
                 }
             }));
         }
