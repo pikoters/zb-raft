@@ -15,6 +15,11 @@
  */
 package io.zeebe.raft;
 
+import static io.zeebe.util.EnsureUtil.ensureNotNull;
+
+import java.time.Duration;
+import java.util.*;
+
 import io.zeebe.logstreams.impl.LogStreamController;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.msgpack.value.ValueArray;
@@ -30,11 +35,6 @@ import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
-
-import java.time.Duration;
-import java.util.*;
-
-import static io.zeebe.util.EnsureUtil.ensureNotNull;
 
 /**
  * <p>
@@ -264,7 +264,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         {
             if (failure == null)
             {
-                actor.consume(subscription, () -> {
+                actor.consume(subscription, () ->
+                {
                     if (subscription.poll() == 0)
                     {
                         actor.yield();

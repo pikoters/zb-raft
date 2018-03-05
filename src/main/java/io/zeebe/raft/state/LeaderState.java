@@ -15,22 +15,17 @@
  */
 package io.zeebe.raft.state;
 
+import java.util.Arrays;
+
 import io.zeebe.logstreams.log.LogStream;
-import io.zeebe.logstreams.spi.LogStorage;
-import io.zeebe.raft.BufferedLogStorageAppender;
+import io.zeebe.raft.*;
 import io.zeebe.raft.Loggers;
-import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendResponse;
 import io.zeebe.raft.protocol.JoinRequest;
-import io.zeebe.transport.RemoteAddress;
-import io.zeebe.transport.ServerOutput;
-import io.zeebe.transport.SocketAddress;
+import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 import org.slf4j.Logger;
-
-import java.util.Arrays;
 
 public class LeaderState extends AbstractRaftState
 {
@@ -38,13 +33,13 @@ public class LeaderState extends AbstractRaftState
     private final ActorControl actor;
 
     private ActorCondition appendCondition;
-    private LogStorage logStorage;
+    private LogStream logStream;
 
     public LeaderState(final Raft raft, final BufferedLogStorageAppender appender, ActorControl actorControl)
     {
         super(raft, appender);
         this.actor = actorControl;
-        logStorage = raft.getLogStream().getLogStorage();
+        logStream = raft.getLogStream();
     }
 
     @Override
@@ -55,7 +50,7 @@ public class LeaderState extends AbstractRaftState
         {
             LOG.debug("In single node cluster, we will commit on each append.");
             appendCondition = actor.onCondition("append-condition", this::commitPositionOnSingleNode);
-            logStorage.registerOnAppendCondition(appendCondition);
+            logStream.registerOnAppendCondition(appendCondition);
         }
     }
 
@@ -84,7 +79,7 @@ public class LeaderState extends AbstractRaftState
 
                     // remove condition
                     LOG.debug("No more single node cluster, we will NOT commit on each append.");
-                    logStorage.removeOnAppendCondition(appendCondition);
+                    logStream.removeOnAppendCondition(appendCondition);
 
                 }
             }
@@ -152,7 +147,7 @@ public class LeaderState extends AbstractRaftState
         }
     }
 
-    private  void commitPositionOnSingleNode()
+    private void commitPositionOnSingleNode()
     {
         final long commitPosition = raft.getLogStream().getCurrentAppenderPosition() - 1;
         final long initialEventPosition = raft.getInitialEventPosition();
