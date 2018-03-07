@@ -147,7 +147,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         final ClientTransport spyClientTransport = spy(clientTransport);
         when(spyClientTransport.getOutput()).thenReturn(spyClientOutput);
 
-        raft = new Raft(socketAddress, logStream, serverTransport, spyClientTransport, persistentStorage)
+        raft = new Raft(socketAddress, logStream, serverTransport, spyClientTransport, persistentStorage, this)
         {
             @Override
             public String getName()
@@ -155,8 +155,6 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                 return socketAddress.toString();
             }
         };
-        raft.registerRaftStateListener(this);
-
         raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
 
         uncommittedReader = new BufferedLogStreamReader(logStream, true);

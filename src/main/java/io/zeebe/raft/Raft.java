@@ -101,7 +101,9 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
     private ScheduledTimer electionTimer;
     private ScheduledTimer flushTimer;
 
-    public Raft(final SocketAddress socketAddress, final LogStream logStream, final BufferingServerTransport serverTransport, final ClientTransport clientTransport, final RaftPersistentStorage persistentStorage)
+    public Raft(final SocketAddress socketAddress, final LogStream logStream,
+                final BufferingServerTransport serverTransport, final ClientTransport clientTransport,
+                final RaftPersistentStorage persistentStorage, RaftStateListener... listeners)
     {
         this.socketAddress = socketAddress;
         this.logStream = logStream;
@@ -114,6 +116,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         followerState = new FollowerState(this, appender);
         candidateState = new CandidateState(this, appender);
         leaderState = new LeaderState(this, appender, actor);
+
+        raftStateListeners.addAll(Arrays.asList(listeners));
 
         followerState.reset();
         state = followerState;
