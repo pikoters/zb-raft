@@ -317,8 +317,8 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
                         becomeCandidate();
                         break;
                 }
+                LOG.debug("Election in state: {}", getState().name());
             }
-            LOG.debug("Election in state: {}", getState().name());
             electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
 

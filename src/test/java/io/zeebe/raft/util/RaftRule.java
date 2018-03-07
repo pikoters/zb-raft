@@ -41,6 +41,7 @@ import io.zeebe.raft.event.RaftConfigurationMember;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
+import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
@@ -75,6 +76,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     protected LogStream logStream;
     protected Raft raft;
+    private ActorControl raftActor;
     protected BufferedLogStreamReader uncommittedReader;
     protected BufferedLogStreamReader committedReader;
 
@@ -149,6 +151,12 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         raft = new Raft(socketAddress, logStream, serverTransport, spyClientTransport, persistentStorage, this)
         {
+            @Override
+            protected void onActorStarting()
+            {
+                raftActor = actor;
+            }
+
             @Override
             public String getName()
             {
@@ -422,25 +430,29 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void interruptConnectionTo(RaftRule other)
     {
-        final ClientRequest clientRequest = mock(ClientRequest.class);
+        raftActor.call(() ->
+        {
+            final ClientRequest clientRequest = mock(ClientRequest.class);
 
-        final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> other.socketAddress.equals(r.getAddress());
-        doReturn(clientRequest)
-            .when(spyClientOutput)
-            .sendRequest(argThat(remoteAddressMatcher), any());
+            final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> other.socketAddress.equals(r.getAddress());
+            doReturn(clientRequest)
+                .when(spyClientOutput)
+                .sendRequest(argThat(remoteAddressMatcher), any());
 
-        doReturn(CompletableActorFuture.completedExceptionally(new RuntimeException("connection is interrupted")))
-            .when(spyClientOutput)
-            .sendRequestWithRetry(argThat(remoteAddressMatcher), any());
+            doReturn(CompletableActorFuture.completedExceptionally(new RuntimeException("connection is interrupted")))
+                .when(spyClientOutput)
+                .sendRequestWithRetry(argThat(remoteAddressMatcher), any());
 
-        doReturn(CompletableActorFuture.completedExceptionally(new TimeoutException("timeout to " + other.socketAddress)))
-            .when(spyClientOutput)
-            .sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
+            doReturn(CompletableActorFuture.completedExceptionally(new TimeoutException("timeout to " + other.socketAddress)))
+                .when(spyClientOutput)
+                .sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
 
-        final RemoteAddress remoteAddress = clientTransport.registerRemoteAddress(other.getSocketAddress());
-        Mockito.doReturn(false)
-            .when(spyClientOutput)
-            .sendMessage(argThat(transportMessage -> readRemoteStreamId(transportMessage) == remoteAddress.getStreamId()));
+            final RemoteAddress remoteAddress = clientTransport.registerRemoteAddress(other.getSocketAddress());
+            Mockito.doReturn(false)
+                .when(spyClientOutput)
+                .sendMessage(argThat(transportMessage -> readRemoteStreamId(transportMessage) == remoteAddress.getStreamId()));
+
+        });
     }
 
     private int readRemoteStreamId(TransportMessage transportMessage)
@@ -462,10 +474,13 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void reconnectTo(RaftRule other)
     {
-        final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> r.getAddress().equals(other.socketAddress);
-        doCallRealMethod().when(spyClientOutput).sendRequest(argThat(r -> r.getAddress().equals(other.socketAddress)), any());
-        doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any());
-        doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
-        doCallRealMethod().when(spyClientOutput).sendMessage(any());
+        raftActor.call(() ->
+        {
+            final ArgumentMatcher<RemoteAddress> remoteAddressMatcher = r -> r.getAddress().equals(other.socketAddress);
+            doCallRealMethod().when(spyClientOutput).sendRequest(argThat(r -> r.getAddress().equals(other.socketAddress)), any());
+            doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any());
+            doCallRealMethod().when(spyClientOutput).sendRequestWithRetry(argThat(remoteAddressMatcher), any(), any());
+            doCallRealMethod().when(spyClientOutput).sendMessage(any());
+        });
     }
 }
