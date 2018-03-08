@@ -2,26 +2,26 @@
 <Configuration status="WARN">
 
   <Loggers>
-  
+
   	<Root level="info">
       <AppenderRef ref="Console"/>
     </Root>
-  
-    <Logger name="io.zeebe" level="debug" additivity="fakse">
+
+    <Logger name="io.zeebe.raft" level="debug" additivity="false">
       <AppenderRef ref="Console"/>
-          
-      <AppenderRef ref="RollingFile-8003"/>
-      <AppenderRef ref="RollingFile-8002"/>
-      <AppenderRef ref="RollingFile-8001"/>
+
+      <!--<AppenderRef ref="RollingFile-8003"/>-->
+      <!--<AppenderRef ref="RollingFile-8002"/>-->
+      <!--<AppenderRef ref="RollingFile-8001"/>-->
     </Logger>
   </Loggers>
 
   <Appenders>
-  	
+
   	<Console name="Console" target="SYSTEM_OUT">
       <PatternLayout pattern="%d{HH:mm:ss.SSS} [%X{actor-name}] [%t] %-5level %logger{36} - %msg%n"/>
     </Console>
-  
+
     <RollingFile name="RollingFile-8001" fileName="logs/app_8001.log"
                  filePattern="logs/app-%d{MM-dd-yyyy}_8001.log.gz">
       <ContextMapFilter onMatch="ACCEPT">
