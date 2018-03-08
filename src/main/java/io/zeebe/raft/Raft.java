@@ -335,6 +335,13 @@ public class Raft extends ZbActor implements ServerMessageHandler, ServerRequest
         shouldElect = false;
     }
 
+    @Override
+    protected void onActorCloseRequested()
+    {
+        Loggers.RAFT_LOGGER.debug("close requested");
+        replicateLogController.close();
+    }
+
     /**
      * Resets all controllers and closes appendEvent requests
      */

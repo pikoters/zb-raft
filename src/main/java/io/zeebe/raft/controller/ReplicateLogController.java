@@ -20,8 +20,11 @@ import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.protocol.AppendRequest;
+import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.ScheduledTimer;
+import io.zeebe.util.sched.clock.ActorClock;
+import sun.rmi.runtime.Log;
 
 public class ReplicateLogController
 {
@@ -29,12 +32,14 @@ public class ReplicateLogController
 
     private final AppendRequest appendRequest = new AppendRequest();
     private final ActorControl actor;
+    private final ActorCondition actorCondition;
     private ScheduledTimer heartBeatTimer;
 
     public ReplicateLogController(final Raft raft, ActorControl actorControl)
     {
         this.raft = raft;
         this.actor = actorControl;
+        actorCondition = actor.onCondition("raft-event-append", this::sendAppendRequest);
     }
 
     public void open()
@@ -45,13 +50,16 @@ public class ReplicateLogController
             raft.getMember(i).reset();
         }
 
-        heartBeatTimer = actor.runAtFixedRate(Raft.HEARTBEAT_INTERVAL, this::sendAppendRequest);
+        heartBeatTimer = actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
+        raft.getLogStream().registerOnAppendCondition(actorCondition);
     }
 
-    // TODO perhaps possible to improve this
-    // only send events if available - otherwise empty heartbeat
-    public void sendAppendRequest()
+    /**
+     * Heartbeat is scheduled at fixed rate.
+     */
+    private void heartBeat()
     {
+        heartBeatTimer = actor.runDelayed(Raft.HEARTBEAT_INTERVAL, this::heartBeat);
         final int memberSize = raft.getMemberSize();
 
         for (int i = 0; i < memberSize; i++)
@@ -73,7 +81,6 @@ public class ReplicateLogController
 
             final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
 
-            Loggers.RAFT_LOGGER.debug("Send append request to {}, sent {}", member.getRemoteAddress().getAddress(), sent);
             if (event != null)
             {
                 if (sent)
@@ -88,6 +95,98 @@ public class ReplicateLogController
         }
     }
 
+    // TODO perhaps possible to improve this
+    // only send events if available - otherwise empty heartbeat
+    public void sendAppendRequest()
+    {
+        final long startTime = ActorClock.currentTimeMillis();
+
+        final int memberSize = raft.getMemberSize();
+
+        boolean hasNext;
+        do
+        {
+            if (startTime + 250 < ActorClock.currentTimeMillis() )
+            {
+                heartBeatTimer.cancel();
+                actor.run(this::heartBeat);
+                break;
+            }
+
+            hasNext = false;
+            for (int i = 0; i < memberSize; i++)
+            {
+                final RaftMember member = raft.getMember(i);
+                LoggedEventImpl event = null;
+                if (!member.hasFailures())
+                {
+                    event = member.getNextEvent();
+                }
+
+                if (event != null)
+                {
+                    appendRequest.reset().setRaft(raft);
+
+                    appendRequest
+                        .setPreviousEventPosition(member.getPreviousPosition())
+                        .setPreviousEventTerm(member.getPreviousTerm())
+                        .setEvent(event);
+
+                    final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
+
+                    if (sent)
+                    {
+                        member.setPreviousEvent(event);
+                    }
+                    else
+                    {
+                        member.setBufferedEvent(event);
+                    }
+                }
+
+
+                hasNext |= member.hasNextEvent();
+            }
+        } while (hasNext);
+
+
+
+//        final int memberSize = raft.getMemberSize();
+//
+//        for (int i = 0; i < memberSize; i++)
+//        {
+//            final RaftMember member = raft.getMember(i);
+//            LoggedEventImpl event = null;
+//            if (!member.hasFailures())
+//            {
+//                event = member.getNextEvent();
+//            }
+//
+//
+//            appendRequest.reset().setRaft(raft);
+//
+//            appendRequest
+//                .setPreviousEventPosition(member.getPreviousPosition())
+//                .setPreviousEventTerm(member.getPreviousTerm())
+//                .setEvent(event);
+//
+//            final boolean sent = raft.sendMessage(member.getRemoteAddress(), appendRequest);
+//
+//            Loggers.RAFT_LOGGER.debug("Send append request to {}, sent {}", member.getRemoteAddress().getAddress(), sent);
+//            if (event != null)
+//            {
+//                if (sent)
+//                {
+//                    member.setPreviousEvent(event);
+//                }
+//                else
+//                {
+//                    member.setBufferedEvent(event);
+//                }
+//            }
+//        }
+    }
+
     public void close()
     {
         if (heartBeatTimer != null)
@@ -95,6 +194,7 @@ public class ReplicateLogController
             heartBeatTimer.cancel();
             heartBeatTimer = null;
         }
+        raft.getLogStream().removeOnCommitPositionUpdatedCondition(actorCondition);
     }
 
 }
