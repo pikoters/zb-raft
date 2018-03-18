@@ -41,10 +41,13 @@ import io.zeebe.raft.state.RaftState;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorControl;
+import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.DirectBuffer;
+import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
 import org.junit.rules.ExternalResource;
 import org.mockito.ArgumentMatcher;
 
@@ -69,9 +72,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     protected Dispatcher clientSendBuffer;
 
     protected Dispatcher serverSendBuffer;
-    protected BufferingServerTransport serverTransport;
-
-    protected Dispatcher serverReceiveBuffer;
+    protected ServerTransport serverTransport;
 
     protected LogStream logStream;
     protected Raft raft;
@@ -104,15 +105,10 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     {
         final String name = socketAddress.toString();
 
+        final RaftApiMessageHandler raftApiMessageHandler = new RaftApiMessageHandler();
+
         serverSendBuffer =
             Dispatchers.create("serverSendBuffer-" + name)
-                       .bufferSize(32 * 1024 * 1024)
-                       .subscriptions("sender-" + name)
-                       .actorScheduler(actorSchedulerRule.get())
-                       .build();
-
-        serverReceiveBuffer =
-            Dispatchers.create("serverReceiveBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender-" + name)
                        .actorScheduler(actorSchedulerRule.get())
@@ -123,7 +119,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                       .sendBuffer(serverSendBuffer)
                       .bindAddress(socketAddress.toInetSocketAddress())
                       .scheduler(actorSchedulerRule.get())
-                      .buildBuffering(serverReceiveBuffer);
+                      .build(raftApiMessageHandler, raftApiMessageHandler);
 
         clientSendBuffer =
             Dispatchers.create("clientSendBuffer-" + name)
@@ -149,12 +145,13 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         logStream.open();
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
+        final OneToOneRingBufferChannel messageBuffer = new OneToOneRingBufferChannel(new UnsafeBuffer(new byte[(16 * 1024 * 1024) + RingBufferDescriptor.TRAILER_LENGTH]));
 
         spyClientOutput = spy(clientTransport.getOutput());
         final ClientTransport spyClientTransport = spy(clientTransport);
         when(spyClientTransport.getOutput()).thenReturn(spyClientOutput);
 
-        raft = new Raft(configuration, socketAddress, logStream, serverTransport, spyClientTransport, persistentStorage, this)
+        raft = new Raft(actorSchedulerRule.get(), configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
         {
             @Override
             protected void onActorStarting()
@@ -163,6 +160,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                 super.onActorStarting();
             }
         };
+        raftApiMessageHandler.registerRaft(raft);
         raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
 
         uncommittedReader = new BufferedLogStreamReader(logStream, true);
@@ -184,7 +182,6 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         serverTransport.close();
         serverSendBuffer.close();
-        serverReceiveBuffer.close();
 
         clientTransport.close();
         clientSendBuffer.close();
@@ -249,9 +246,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void clearSubscription()
     {
-        final String subscriptionName = raft.getSubscriptionName();
-        final Subscription subscription = serverReceiveBuffer.getSubscription(subscriptionName);
-        subscription.poll(NOOP_FRAGMENT_HANDLER, Integer.MAX_VALUE);
+        raft.clearReceiveBuffer().join();
     }
 
     public boolean isLeader()

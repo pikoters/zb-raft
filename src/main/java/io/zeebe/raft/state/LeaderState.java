@@ -109,14 +109,12 @@ public class LeaderState extends AbstractRaftState
             {
                 if (succeeded)
                 {
-                    member.setMatchPosition(eventPosition);
-                    member.resetFailures();
-                    actor.submit(this::commit);
+                    member.onFollowerHasAcknowledgedPosition(eventPosition);
+                    commit();
                 }
                 else
                 {
-                    member.failure();
-                    member.resetToPosition(eventPosition);
+                    member.onFollowerHasFailedPosition(eventPosition);
                 }
             }
         }
