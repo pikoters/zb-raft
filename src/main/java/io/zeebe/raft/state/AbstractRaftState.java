@@ -33,6 +33,8 @@ public abstract class AbstractRaftState
     protected final JoinResponse joinResponse = new JoinResponse();
     protected final PollResponse pollResponse = new PollResponse();
     protected final VoteResponse voteResponse = new VoteResponse();
+    protected final LeaveResponse leaveResponse = new LeaveResponse();
+
     protected final AppendResponse appendResponse = new AppendResponse();
 
     protected final BufferedLogStreamReader reader;
@@ -103,6 +105,12 @@ public abstract class AbstractRaftState
         }
     }
 
+    public void leaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final LeaveRequest leaveRequest)
+    {
+        raft.mayStepDown(leaveRequest);
+        rejectLeaveRequest(serverOutput, remoteAddress, requestId);
+    }
+
     public void appendRequest(final AppendRequest appendRequest)
     {
         Loggers.RAFT_LOGGER.debug("Got Append request in leader state ");
@@ -133,6 +141,27 @@ public abstract class AbstractRaftState
             .setRaft(raft);
 
         raft.sendResponse(serverOutput, remoteAddress, requestId, joinResponse);
+    }
+
+    protected void acceptLeaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
+    {
+        leaveResponse
+            .reset()
+            .setSucceeded(true)
+            .setRaft(raft);
+
+        raft.sendResponse(serverOutput, remoteAddress, requestId, leaveResponse);
+    }
+
+
+    protected void rejectLeaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
+    {
+        leaveResponse
+            .reset()
+            .setSucceeded(false)
+            .setRaft(raft);
+
+        raft.sendResponse(serverOutput, remoteAddress, requestId, leaveResponse);
     }
 
     protected void acceptPollRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)

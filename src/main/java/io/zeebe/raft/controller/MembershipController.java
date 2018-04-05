@@ -19,31 +19,42 @@ import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.protocol.JoinRequest;
 import io.zeebe.raft.protocol.JoinResponse;
+import io.zeebe.raft.protocol.LeaveRequest;
+import io.zeebe.raft.protocol.LeaveResponse;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.ActorFuture;
+import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
 
 import java.time.Duration;
 
-public class JoinController
+public class MembershipController
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
 
     public static final Duration DEFAULT_JOIN_TIMEOUT = Duration.ofMillis(500);
     public static final Duration DEFAULT_JOIN_RETRY = Duration.ofMillis(200);
 
+    public static final Duration DEFAULT_LEAVE_TIMEOUT = Duration.ofMillis(500);
+    public static final Duration DEFAULT_LEAVE_RETRY = Duration.ofMillis(200);
+
     private final ActorControl actor;
     private final JoinRequest joinRequest = new JoinRequest();
     private final JoinResponse joinResponse = new JoinResponse();
+
+    private final LeaveRequest leaveRequest = new LeaveRequest();
+    private final LeaveResponse leaveResponse = new LeaveResponse();
+
     private final Raft raft;
 
     // will not be reset to continue to select new members on every retry
     private int currentMember;
     private boolean isJoined;
+    private CompletableActorFuture<Void> leaveFuture;
 
-    public JoinController(final Raft raft, ActorControl actorControl)
+    public MembershipController(final Raft raft, ActorControl actorControl)
     {
         this.actor = actorControl;
         this.raft = raft;
@@ -111,6 +122,87 @@ public class JoinController
         {
             LOG.debug("Joined single node cluster.");
             isJoined = true;
+        }
+    }
+
+    public void leave(CompletableActorFuture<Void> completableActorFuture)
+    {
+        if (isJoined)
+        {
+            leaveFuture = completableActorFuture;
+            leave();
+        }
+        else
+        {
+            completableActorFuture.complete(null);
+        }
+    }
+
+    private void leave()
+    {
+        final RemoteAddress nextMember = getNextMember();
+
+        if (nextMember != null)
+        {
+            leaveRequest.reset().setRaft(raft);
+
+            LOG.debug("Send leave request to {}", nextMember);
+            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, leaveRequest, DEFAULT_LEAVE_TIMEOUT);
+
+            actor.runOnCompletion(responseFuture, ((response, throwable) ->
+            {
+                if (throwable == null)
+                {
+                    try
+                    {
+                        final DirectBuffer responseBuffer = response.getResponseBuffer();
+                        leaveResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
+                    }
+                    finally
+                    {
+                        response.close();
+                    }
+
+                    // TODO is it really necessary to be in the same term?!
+                    if (!raft.mayStepDown(leaveResponse) && raft.isTermCurrent(leaveResponse))
+                    {
+                        if (leaveResponse.isSucceeded())
+                        {
+                            LOG.debug("Leave request was accepted in term {}", leaveResponse.getTerm());
+                            isJoined = false;
+
+                            // as this will not trigger a state change in raft we have to notify listeners
+                            // that this raft is now in a visible state
+                            raft.notifyRaftStateListeners();
+                            // TODO should we close the raft ?!
+//                            raft.close();
+                            leaveFuture.complete(null);
+                        }
+                        else
+                        {
+                            LOG.debug("Leave was not accepted!");
+                            actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                        }
+                    }
+                    else
+                    {
+                        LOG.debug("Leave response with different term.");
+                        // received response from different term
+                        actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                    }
+                }
+                else
+                {
+                    LOG.debug("Failed to send leave request to {}", nextMember);
+                    actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                }
+            }));
+        }
+        else
+        {
+            throw new UnsupportedOperationException("Signle node can't left cluster");
+//            LOG.debug("Joined single node cluster.");
+//            left = true;
         }
     }
 

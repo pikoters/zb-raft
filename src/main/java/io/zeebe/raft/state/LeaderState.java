@@ -21,6 +21,7 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.*;
 import io.zeebe.raft.protocol.AppendResponse;
 import io.zeebe.raft.protocol.JoinRequest;
+import io.zeebe.raft.protocol.LeaveRequest;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
@@ -83,6 +84,37 @@ public class LeaderState extends AbstractRaftState
 
         }
     }
+
+    @Override
+    public void leaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final LeaveRequest leaveRequest)
+    {
+        if (!raft.mayStepDown(leaveRequest))
+        {
+            if (raft.isInitialEventCommitted() && raft.isConfigurationEventCommitted())
+            {
+                final SocketAddress socketAddress = leaveRequest.getSocketAddress();
+                if (!raft.isMember(socketAddress))
+                {
+                    acceptLeaveRequest(serverOutput, remoteAddress, requestId);
+                }
+                else
+                {
+                    raft.removeMember(serverOutput, remoteAddress, requestId, socketAddress);
+
+                    if (raft.getMembers().isEmpty())
+                    {
+                        // commit on single node again
+                        logStream.registerOnAppendCondition(appendCondition);
+                    }
+                }
+            }
+            else
+            {
+                rejectLeaveRequest(serverOutput, remoteAddress, requestId);
+            }
+        }
+    }
+
 
     @Override
     public void appendResponse(final AppendResponse appendResponse)

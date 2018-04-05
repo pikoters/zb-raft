@@ -57,7 +57,7 @@ public class AppendRaftEventController
 
     public void appendEvent(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
     {
-        // this has to happen immediately so multiple join request are not accepted
+        // this has to happen immediately so multiple membership request are not accepted
         this.serverOutput = serverOutput;
         this.remoteAddress = remoteAddress;
         this.requestId = requestId;
