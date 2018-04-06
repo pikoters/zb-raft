@@ -18,7 +18,7 @@ package io.zeebe.raft.controller;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.RaftEvent;
-import io.zeebe.raft.protocol.JoinResponse;
+import io.zeebe.raft.protocol.ConfigurationResponse;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.transport.ServerOutput;
 import io.zeebe.util.sched.ActorCondition;
@@ -36,7 +36,7 @@ public class AppendRaftEventController
     private final ActorControl actor;
 
     private final RaftEvent raftEvent = new RaftEvent();
-    private final JoinResponse joinResponse = new JoinResponse();
+    private final ConfigurationResponse configurationResponse = new ConfigurationResponse();
     private final ActorCondition actorCondition;
 
     private long position;
@@ -89,6 +89,7 @@ public class AppendRaftEventController
             LOG.debug("Raft event for term {} was committed on position {}", raft.getTerm(), position);
 
             // send response
+            // TODO JOIN OR LEAVE
             acceptJoinRequest();
 
             isCommited = true;
@@ -103,12 +104,12 @@ public class AppendRaftEventController
 
     private void acceptJoinRequest()
     {
-        joinResponse
+        configurationResponse
             .reset()
             .setSucceeded(true)
             .setRaft(raft);
 
-        raft.sendResponse(serverOutput, remoteAddress, requestId, joinResponse);
+        raft.sendResponse(serverOutput, remoteAddress, requestId, configurationResponse);
     }
     public long getPosition()
     {

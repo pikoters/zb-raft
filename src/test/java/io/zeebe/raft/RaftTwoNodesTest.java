@@ -52,6 +52,27 @@ public class RaftTwoNodesTest
     }
 
     @Test
+    public void shouldLeaveCluster()
+    {
+        // given
+        final RaftRule leader = cluster.awaitLeader();
+        cluster.awaitInitialEventCommittedOnAll(leader.getTerm());
+        cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
+
+        // when
+        final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
+        final Raft otherRaft = otherRafts[0].getRaft();
+        otherRaft.leave().join();
+
+        // then
+        cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
+
+        assertThat(leader.getRaft().getMemberSize()).isEqualTo(0);
+        assertThat(otherRaft.getMemberSize()).isEqualTo(1);
+        assertThat(otherRaft.isJoined()).isFalse();
+    }
+
+    @Test
     public void shouldReplicateLogEvents()
     {
         // given

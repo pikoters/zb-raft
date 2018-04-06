@@ -30,10 +30,9 @@ public abstract class AbstractRaftState
     protected final BufferedLogStorageAppender appender;
     protected final LogStream logStream;
 
-    protected final JoinResponse joinResponse = new JoinResponse();
+    protected final ConfigurationResponse configurationResponse = new ConfigurationResponse();
     protected final PollResponse pollResponse = new PollResponse();
     protected final VoteResponse voteResponse = new VoteResponse();
-    protected final LeaveResponse leaveResponse = new LeaveResponse();
 
     protected final AppendResponse appendResponse = new AppendResponse();
 
@@ -60,10 +59,10 @@ public abstract class AbstractRaftState
         reader.close();
     }
 
-    public void joinRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final JoinRequest joinRequest)
+    public void configurationRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final ConfigurationRequest configurationRequest)
     {
-        raft.mayStepDown(joinRequest);
-        rejectJoinRequest(serverOutput, remoteAddress, requestId);
+        raft.mayStepDown(configurationRequest);
+        rejectConfigurationRequest(serverOutput, remoteAddress, requestId);
     }
 
     public void pollRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final PollRequest pollRequest)
@@ -87,6 +86,7 @@ public abstract class AbstractRaftState
 
     public void voteRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final VoteRequest voteRequest)
     {
+
         raft.skipNextElection();
         raft.mayStepDown(voteRequest);
 
@@ -105,12 +105,6 @@ public abstract class AbstractRaftState
         }
     }
 
-    public void leaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final LeaveRequest leaveRequest)
-    {
-        raft.mayStepDown(leaveRequest);
-        rejectLeaveRequest(serverOutput, remoteAddress, requestId);
-    }
-
     public void appendRequest(final AppendRequest appendRequest)
     {
         Loggers.RAFT_LOGGER.debug("Got Append request in leader state ");
@@ -123,45 +117,24 @@ public abstract class AbstractRaftState
         raft.mayStepDown(appendResponse);
     }
 
-    protected void acceptJoinRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
+    protected void acceptConfigurationRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
     {
-        joinResponse
+        configurationResponse
             .reset()
             .setSucceeded(true)
             .setRaft(raft);
 
-        raft.sendResponse(serverOutput, remoteAddress, requestId, joinResponse);
+        raft.sendResponse(serverOutput, remoteAddress, requestId, configurationResponse);
     }
 
-    protected void rejectJoinRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
+    protected void rejectConfigurationRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
     {
-        joinResponse
+        configurationResponse
             .reset()
             .setSucceeded(false)
             .setRaft(raft);
 
-        raft.sendResponse(serverOutput, remoteAddress, requestId, joinResponse);
-    }
-
-    protected void acceptLeaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
-    {
-        leaveResponse
-            .reset()
-            .setSucceeded(true)
-            .setRaft(raft);
-
-        raft.sendResponse(serverOutput, remoteAddress, requestId, leaveResponse);
-    }
-
-
-    protected void rejectLeaveRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
-    {
-        leaveResponse
-            .reset()
-            .setSucceeded(false)
-            .setRaft(raft);
-
-        raft.sendResponse(serverOutput, remoteAddress, requestId, leaveResponse);
+        raft.sendResponse(serverOutput, remoteAddress, requestId, configurationResponse);
     }
 
     protected void acceptPollRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)

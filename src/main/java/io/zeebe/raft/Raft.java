@@ -79,7 +79,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private boolean shouldElect = true;
 
     // controller
-    private MembershipController membershipController;
+    private ConfigurationController configurationController;
     private AppendRaftEventController appendRaftEventController;
 
     private OpenLogStreamController openLogStreamController;
@@ -95,10 +95,9 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private final TransportMessage transportMessage = new TransportMessage();
     private final ServerResponse serverResponse = new ServerResponse();
 
-    private final JoinRequest joinRequest = new JoinRequest();
+    private final ConfigurationRequest configurationRequest = new ConfigurationRequest();
     private final PollRequest pollRequest = new PollRequest();
     private final VoteRequest voteRequest = new VoteRequest();
-    private final LeaveRequest leaveRequest = new LeaveRequest();
 
     private final AppendRequest appendRequest = new AppendRequest();
     private final AppendResponse appendResponse = new AppendResponse();
@@ -160,8 +159,8 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public void notifyRaftStateListeners()
     {
         // only propagate state changes if the member is joined
-        // otherwise members are already visible even if the join request was never accepted
-        if (membershipController.isJoined())
+        // otherwise members are already visible even if the joinRequest request was never accepted
+        if (configurationController.isJoined())
         {
             raftStateListeners.forEach(this::notifyRaftStateListener);
         }
@@ -250,7 +249,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     @Override
     protected void onActorStarting()
     {
-        membershipController = new MembershipController(this, actor);
+        configurationController = new ConfigurationController(this, actor);
         appendRaftEventController = new AppendRaftEventController(this, actor);
 
         openLogStreamController = new OpenLogStreamController(this, actor);
@@ -277,7 +276,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         // start as follower
         becomeFollower();
 
-        actor.submit(membershipController::join);
+        actor.submit(configurationController::join);
 
         if (members.isEmpty())
         {
@@ -292,7 +291,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     {
         if (getState() != RaftState.LEADER)
         {
-            if (shouldElect && membershipController.isJoined())
+            if (shouldElect && configurationController.isJoined())
             {
                 switch (getState())
                 {
@@ -358,7 +357,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 electionTimer.cancel();
 
                 // TODO I think it is not necessary to use submit here
-                membershipController.leave(leaveFuture);
+                configurationController.leave(leaveFuture);
             }
             else
             {
@@ -426,9 +425,9 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
         actor.run(() ->
         {
-            if (joinRequest.tryWrap(requestData, 0, length))
+            if (configurationRequest.tryWrap(requestData, 0, length))
             {
-                state.joinRequest(output, remoteAddress, requestId, joinRequest);
+                state.configurationRequest(output, remoteAddress, requestId, configurationRequest);
             }
             else if (pollRequest.tryWrap(requestData, 0, length))
             {
@@ -437,9 +436,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             else if (voteRequest.tryWrap(requestData, 0, length))
             {
                 state.voteRequest(output, remoteAddress, requestId, voteRequest);
-            } else if (leaveRequest.tryWrap(requestData, 0, length))
-            {
-                state.leaveRequest(output, remoteAddress, requestId, leaveRequest);
             }
         });
 
@@ -843,6 +839,11 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public String toString()
     {
         return "raft-" + logStream.getLogName() + "-" + socketAddress.host() + ":" + socketAddress.port();
+    }
+
+    public boolean isJoined()
+    {
+        return configurationController.isJoined();
     }
 
     /**

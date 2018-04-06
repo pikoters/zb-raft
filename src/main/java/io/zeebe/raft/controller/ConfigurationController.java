@@ -17,11 +17,10 @@ package io.zeebe.raft.controller;
 
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
-import io.zeebe.raft.protocol.JoinRequest;
-import io.zeebe.raft.protocol.JoinResponse;
-import io.zeebe.raft.protocol.LeaveRequest;
-import io.zeebe.raft.protocol.LeaveResponse;
-import io.zeebe.transport.*;
+import io.zeebe.raft.protocol.ConfigurationRequest;
+import io.zeebe.raft.protocol.ConfigurationResponse;
+import io.zeebe.transport.ClientResponse;
+import io.zeebe.transport.RemoteAddress;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
@@ -30,7 +29,7 @@ import org.slf4j.Logger;
 
 import java.time.Duration;
 
-public class MembershipController
+public class ConfigurationController
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
 
@@ -41,11 +40,8 @@ public class MembershipController
     public static final Duration DEFAULT_LEAVE_RETRY = Duration.ofMillis(200);
 
     private final ActorControl actor;
-    private final JoinRequest joinRequest = new JoinRequest();
-    private final JoinResponse joinResponse = new JoinResponse();
-
-    private final LeaveRequest leaveRequest = new LeaveRequest();
-    private final LeaveResponse leaveResponse = new LeaveResponse();
+    private final ConfigurationRequest configurationRequest = new ConfigurationRequest();
+    private final ConfigurationResponse configurationResponse = new ConfigurationResponse();
 
     private final Raft raft;
 
@@ -54,7 +50,7 @@ public class MembershipController
     private boolean isJoined;
     private CompletableActorFuture<Void> leaveFuture;
 
-    public MembershipController(final Raft raft, ActorControl actorControl)
+    public ConfigurationController(final Raft raft, ActorControl actorControl)
     {
         this.actor = actorControl;
         this.raft = raft;
@@ -66,10 +62,10 @@ public class MembershipController
 
         if (nextMember != null)
         {
-            joinRequest.reset().setRaft(raft);
+            configurationRequest.reset().setRaft(raft);
 
-            LOG.debug("Send join request to {}", nextMember);
-            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, joinRequest, DEFAULT_JOIN_TIMEOUT);
+            LOG.debug("Send joinRequest request to {}", nextMember);
+            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, configurationRequest, DEFAULT_JOIN_TIMEOUT);
 
             actor.runOnCompletion(responseFuture, ((response, throwable) ->
             {
@@ -78,21 +74,21 @@ public class MembershipController
                     try
                     {
                         final DirectBuffer responseBuffer = response.getResponseBuffer();
-                        joinResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
+                        configurationResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
                     }
                     finally
                     {
                         response.close();
                     }
 
-                    if (!raft.mayStepDown(joinResponse) && raft.isTermCurrent(joinResponse))
+                    if (!raft.mayStepDown(configurationResponse) && raft.isTermCurrent(configurationResponse))
                     {
                         // update members to maybe discover leader
-                        raft.addMembers(joinResponse.getMembers());
+                        raft.addMembers(configurationResponse.getMembers());
 
-                        if (joinResponse.isSucceeded())
+                        if (configurationResponse.isSucceeded())
                         {
-                            LOG.debug("Join request was accepted in term {}", joinResponse.getTerm());
+                            LOG.debug("Join request was accepted in term {}", configurationResponse.getTerm());
                             isJoined = true;
                             // as this will not trigger a state change in raft we have to notify listeners
                             // that this raft is now in a visible state
@@ -113,7 +109,7 @@ public class MembershipController
                 }
                 else
                 {
-                    LOG.debug("Failed to send join request to {}", nextMember);
+                    LOG.debug("Failed to send joinRequest request to {}", nextMember);
                     actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
                 }
             }));
@@ -144,10 +140,10 @@ public class MembershipController
 
         if (nextMember != null)
         {
-            leaveRequest.reset().setRaft(raft);
+            configurationRequest.reset().setRaft(raft).setLeave();
 
             LOG.debug("Send leave request to {}", nextMember);
-            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, leaveRequest, DEFAULT_LEAVE_TIMEOUT);
+            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, configurationRequest, DEFAULT_LEAVE_TIMEOUT);
 
             actor.runOnCompletion(responseFuture, ((response, throwable) ->
             {
@@ -156,26 +152,27 @@ public class MembershipController
                     try
                     {
                         final DirectBuffer responseBuffer = response.getResponseBuffer();
-                        leaveResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
+                        configurationResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
                     }
                     finally
                     {
                         response.close();
                     }
 
-                    // TODO is it really necessary to be in the same term?!
-                    if (!raft.mayStepDown(leaveResponse) && raft.isTermCurrent(leaveResponse))
+                    // TODO we should not do election
+                    if (!raft.mayStepDown(configurationResponse) && raft.isTermCurrent(configurationResponse))
                     {
-                        if (leaveResponse.isSucceeded())
+                        // update members to maybe discover leader
+                        raft.addMembers(configurationResponse.getMembers());
+
+                        if (configurationResponse.isSucceeded())
                         {
-                            LOG.debug("Leave request was accepted in term {}", leaveResponse.getTerm());
+                            LOG.debug("Leave request was accepted in term {}", configurationResponse.getTerm());
                             isJoined = false;
 
                             // as this will not trigger a state change in raft we have to notify listeners
                             // that this raft is now in a visible state
                             raft.notifyRaftStateListeners();
-                            // TODO should we close the raft ?!
-//                            raft.close();
                             leaveFuture.complete(null);
                         }
                         else
