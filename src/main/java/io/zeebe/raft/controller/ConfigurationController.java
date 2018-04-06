@@ -56,7 +56,7 @@ public class ConfigurationController
 
     public void join()
     {
-        configurationRequest((nextMember) -> {
+        sendConfigurationRequest((nextMember) -> {
             LOG.debug("Send join configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft);
         }, () ->
@@ -76,7 +76,7 @@ public class ConfigurationController
         if (isJoined)
         {
             leaveFuture = completableActorFuture;
-            configurationRequest((nextMember) -> {
+            sendConfigurationRequest((nextMember) -> {
                     LOG.debug("Send leave configuration request to {}", nextMember);
                     configurationRequest.reset().setRaft(raft).setLeave();
             },
@@ -99,7 +99,7 @@ public class ConfigurationController
         }
     }
 
-    public void configurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
+    private void sendConfigurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
     {
         final RemoteAddress nextMember = getNextMember();
 
@@ -136,20 +136,20 @@ public class ConfigurationController
                         else
                         {
                             LOG.debug("Configuration was not accepted!");
-                            actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                            actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                         }
                     }
                     else
                     {
                         LOG.debug("Configuration response with different term.");
                         // received response from different term
-                        actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                        actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                     }
                 }
                 else
                 {
                     LOG.debug("Failed to send configuration request to {}", nextMember);
-                    actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                    actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                 }
             }));
         }

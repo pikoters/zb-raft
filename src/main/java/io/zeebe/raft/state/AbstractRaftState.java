@@ -74,9 +74,16 @@ public abstract class AbstractRaftState
 
         if (granted)
         {
-            Loggers.RAFT_LOGGER.debug("accept poll request");
-            raft.skipNextElection();
-            acceptPollRequest(serverOutput, remoteAddress, requestId);
+            if (raft.shouldElect())
+            {
+                Loggers.RAFT_LOGGER.debug("accept poll request");
+                acceptPollRequest(serverOutput, remoteAddress, requestId);
+            }
+            else
+            {
+                Loggers.RAFT_LOGGER.debug("Reject poll, because have no heart beat timeout.");
+            }
+
         }
         else
         {
@@ -86,18 +93,24 @@ public abstract class AbstractRaftState
 
     public void voteRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final VoteRequest voteRequest)
     {
-
-        raft.skipNextElection();
         raft.mayStepDown(voteRequest);
 
         final boolean granted = raft.isTermCurrent(voteRequest) &&
             raft.canVoteFor(voteRequest) &&
-            appender.isAfterOrEqualsLastEvent(voteRequest.getLastEventPosition(), voteRequest.getLastEventTerm());
+            appender.isAfterOrEqualsLastEvent(voteRequest.getLastEventPosition(), voteRequest.getLastEventTerm()) &&
+            raft.shouldElect();
 
         if (granted)
         {
-            raft.setVotedFor(voteRequest.getSocketAddress());
-            acceptVoteRequest(serverOutput, remoteAddress, requestId);
+            if (raft.shouldElect())
+            {
+                raft.setVotedFor(voteRequest.getSocketAddress());
+                acceptVoteRequest(serverOutput, remoteAddress, requestId);
+            }
+            else
+            {
+                Loggers.RAFT_LOGGER.debug("Reject poll, because have no heart beat timeout.");
+            }
         }
         else
         {

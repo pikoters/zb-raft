@@ -27,6 +27,7 @@ import io.zeebe.transport.impl.actor.Receiver;
 import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.sched.*;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
+import io.zeebe.util.sched.clock.ActorClock;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
@@ -76,7 +77,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private final Map<SocketAddress, RaftMember> memberLookup = new HashMap<>();
     private final List<RaftMember> members = new ArrayList<>();
     private final List<RaftStateListener> raftStateListeners = new ArrayList<>();
-    private boolean shouldElect = true;
 
     // controller
     private ConfigurationController configurationController;
@@ -103,6 +103,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private final AppendResponse appendResponse = new AppendResponse();
     private ScheduledTimer electionTimer;
     private String actorName;
+    private long lastHeartBeatTime;
 
     public Raft(final ActorScheduler actorScheduler,
             final RaftConfiguration configuration,
@@ -291,7 +292,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     {
         if (getState() != RaftState.LEADER)
         {
-            if (shouldElect && configurationController.isJoined())
+            if (shouldElect() && configurationController.isJoined())
             {
                 switch (getState())
                 {
@@ -312,13 +313,11 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             }
             electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
         }
-
-        shouldElect = true;
     }
 
-    public void skipNextElection()
+    public void updateLastHeartBeatTime()
     {
-        shouldElect = false;
+        lastHeartBeatTime = ActorClock.currentTimeMillis();
     }
 
     @Override
@@ -456,6 +455,17 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     }
 
     // state
+
+    public long getLastHeartBeatTime()
+    {
+        return lastHeartBeatTime;
+    }
+
+    public boolean shouldElect()
+    {
+        final long currentTime = ActorClock.currentTimeMillis();
+        return currentTime >= (lastHeartBeatTime + configuration.electionIntervalMs);
+    }
 
     /**
      * @return the current {@link RaftState} of this raft node
