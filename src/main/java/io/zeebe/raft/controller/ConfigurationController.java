@@ -56,14 +56,15 @@ public class ConfigurationController
 
     public void join()
     {
-        sendConfigurationRequest((nextMember) -> {
+        sendConfigurationRequest((nextMember) ->
+        {
             LOG.debug("Send join configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft);
         }, () ->
-        {
-            LOG.debug("Joined single node cluster.");
-            isJoined = true;
-        }, () -> {
+            {
+                LOG.debug("Joined single node cluster.");
+                isJoined = true;
+            }, () -> {
                 isJoined = true;
                 // as this will not trigger a state change in raft we have to notify listeners
                 // that this raft is now in a visible state
@@ -76,22 +77,22 @@ public class ConfigurationController
         if (isJoined)
         {
             leaveFuture = completableActorFuture;
-            sendConfigurationRequest((nextMember) -> {
-                    LOG.debug("Send leave configuration request to {}", nextMember);
-                    configurationRequest.reset().setRaft(raft).setLeave();
-            },
-                () ->
+            sendConfigurationRequest((nextMember) ->
             {
-                throw new UnsupportedOperationException("Signle node can't left cluster");
-            }, () -> {
+                LOG.debug("Send leave configuration request to {}", nextMember);
+                configurationRequest.reset().setRaft(raft).setLeave();
+            }, () ->
+                {
+                    throw new UnsupportedOperationException("Signle node can't left cluster");
+                }, () ->
+                {
+                    isJoined = false;
 
-                isJoined = false;
-
-                // as this will not trigger a state change in raft we have to notify listeners
-                // that this raft is now in a visible state
-                raft.notifyRaftStateListeners();
-                leaveFuture.complete(null);
-            });
+                    // as this will not trigger a state change in raft we have to notify listeners
+                    // that this raft is now in a visible state
+                    raft.notifyRaftStateListeners();
+                    leaveFuture.complete(null);
+                });
         }
         else
         {

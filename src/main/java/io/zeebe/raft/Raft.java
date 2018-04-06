@@ -684,8 +684,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             return;
         }
 
-        RaftMember member = getMember(socketAddress);
-
+        final RaftMember member = getMember(socketAddress);
         if (member != null)
         {
             members.remove(member);
