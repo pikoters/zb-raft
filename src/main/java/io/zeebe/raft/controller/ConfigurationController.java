@@ -28,16 +28,14 @@ import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
 
 import java.time.Duration;
+import java.util.function.Consumer;
 
 public class ConfigurationController
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
 
-    public static final Duration DEFAULT_JOIN_TIMEOUT = Duration.ofMillis(500);
-    public static final Duration DEFAULT_JOIN_RETRY = Duration.ofMillis(200);
-
-    public static final Duration DEFAULT_LEAVE_TIMEOUT = Duration.ofMillis(500);
-    public static final Duration DEFAULT_LEAVE_RETRY = Duration.ofMillis(200);
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(500);
+    public static final Duration DEFAULT_RETRY = Duration.ofMillis(200);
 
     private final ActorControl actor;
     private final ConfigurationRequest configurationRequest = new ConfigurationRequest();
@@ -58,67 +56,19 @@ public class ConfigurationController
 
     public void join()
     {
-        final RemoteAddress nextMember = getNextMember();
-
-        if (nextMember != null)
-        {
+        configurationRequest((nextMember) -> {
+            LOG.debug("Send join configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft);
-
-            LOG.debug("Send joinRequest request to {}", nextMember);
-            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, configurationRequest, DEFAULT_JOIN_TIMEOUT);
-
-            actor.runOnCompletion(responseFuture, ((response, throwable) ->
-            {
-                if (throwable == null)
-                {
-                    try
-                    {
-                        final DirectBuffer responseBuffer = response.getResponseBuffer();
-                        configurationResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
-                    }
-                    finally
-                    {
-                        response.close();
-                    }
-
-                    if (!raft.mayStepDown(configurationResponse) && raft.isTermCurrent(configurationResponse))
-                    {
-                        // update members to maybe discover leader
-                        raft.addMembers(configurationResponse.getMembers());
-
-                        if (configurationResponse.isSucceeded())
-                        {
-                            LOG.debug("Join request was accepted in term {}", configurationResponse.getTerm());
-                            isJoined = true;
-                            // as this will not trigger a state change in raft we have to notify listeners
-                            // that this raft is now in a visible state
-                            raft.notifyRaftStateListeners();
-                        }
-                        else
-                        {
-                            LOG.debug("Join was not accepted!");
-                            actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
-                        }
-                    }
-                    else
-                    {
-                        LOG.debug("Join response with different term.");
-                        // received response from different term
-                        actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
-                    }
-                }
-                else
-                {
-                    LOG.debug("Failed to send joinRequest request to {}", nextMember);
-                    actor.runDelayed(DEFAULT_JOIN_RETRY, this::join);
-                }
-            }));
-        }
-        else
+        }, () ->
         {
             LOG.debug("Joined single node cluster.");
             isJoined = true;
-        }
+        }, () -> {
+                isJoined = true;
+                // as this will not trigger a state change in raft we have to notify listeners
+                // that this raft is now in a visible state
+                raft.notifyRaftStateListeners();
+            });
     }
 
     public void leave(CompletableActorFuture<Void> completableActorFuture)
@@ -126,7 +76,22 @@ public class ConfigurationController
         if (isJoined)
         {
             leaveFuture = completableActorFuture;
-            leave();
+            configurationRequest((nextMember) -> {
+                    LOG.debug("Send leave configuration request to {}", nextMember);
+                    configurationRequest.reset().setRaft(raft).setLeave();
+            },
+                () ->
+            {
+                throw new UnsupportedOperationException("Signle node can't left cluster");
+            }, () -> {
+
+                isJoined = false;
+
+                // as this will not trigger a state change in raft we have to notify listeners
+                // that this raft is now in a visible state
+                raft.notifyRaftStateListeners();
+                leaveFuture.complete(null);
+            });
         }
         else
         {
@@ -134,16 +99,15 @@ public class ConfigurationController
         }
     }
 
-    private void leave()
+    public void configurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
     {
         final RemoteAddress nextMember = getNextMember();
 
         if (nextMember != null)
         {
-            configurationRequest.reset().setRaft(raft).setLeave();
+            configureRequest.accept(nextMember);
 
-            LOG.debug("Send leave request to {}", nextMember);
-            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, configurationRequest, DEFAULT_LEAVE_TIMEOUT);
+            final ActorFuture<ClientResponse> responseFuture = raft.sendRequest(nextMember, configurationRequest, DEFAULT_TIMEOUT);
 
             actor.runOnCompletion(responseFuture, ((response, throwable) ->
             {
@@ -159,7 +123,6 @@ public class ConfigurationController
                         response.close();
                     }
 
-                    // TODO we should not do election
                     if (!raft.mayStepDown(configurationResponse) && raft.isTermCurrent(configurationResponse))
                     {
                         // update members to maybe discover leader
@@ -167,39 +130,32 @@ public class ConfigurationController
 
                         if (configurationResponse.isSucceeded())
                         {
-                            LOG.debug("Leave request was accepted in term {}", configurationResponse.getTerm());
-                            isJoined = false;
-
-                            // as this will not trigger a state change in raft we have to notify listeners
-                            // that this raft is now in a visible state
-                            raft.notifyRaftStateListeners();
-                            leaveFuture.complete(null);
+                            LOG.debug("Configuration request was accepted in term {}", configurationResponse.getTerm());
+                            configurationAcceptedCallback.run();
                         }
                         else
                         {
-                            LOG.debug("Leave was not accepted!");
-                            actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                            LOG.debug("Configuration was not accepted!");
+                            actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                         }
                     }
                     else
                     {
-                        LOG.debug("Leave response with different term.");
+                        LOG.debug("Configuration response with different term.");
                         // received response from different term
-                        actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                        actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                     }
                 }
                 else
                 {
-                    LOG.debug("Failed to send leave request to {}", nextMember);
-                    actor.runDelayed(DEFAULT_LEAVE_RETRY, this::leave);
+                    LOG.debug("Failed to send configuration request to {}", nextMember);
+                    actor.runDelayed(DEFAULT_RETRY, () -> configurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
                 }
             }));
         }
         else
         {
-            throw new UnsupportedOperationException("Signle node can't left cluster");
-//            LOG.debug("Joined single node cluster.");
-//            left = true;
+            onSingleNodeConfigurationCallback.run();
         }
     }
 

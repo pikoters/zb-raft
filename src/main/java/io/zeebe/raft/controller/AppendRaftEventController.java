@@ -89,8 +89,7 @@ public class AppendRaftEventController
             LOG.debug("Raft event for term {} was committed on position {}", raft.getTerm(), position);
 
             // send response
-            // TODO JOIN OR LEAVE
-            acceptJoinRequest();
+            acceptConfigurationRequest();
 
             isCommited = true;
             raft.getLogStream().removeOnCommitPositionUpdatedCondition(actorCondition);
@@ -102,7 +101,7 @@ public class AppendRaftEventController
         return position >= 0 && position <= raft.getLogStream().getCommitPosition();
     }
 
-    private void acceptJoinRequest()
+    private void acceptConfigurationRequest()
     {
         configurationResponse
             .reset()
