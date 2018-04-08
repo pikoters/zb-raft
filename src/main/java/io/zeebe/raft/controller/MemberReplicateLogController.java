@@ -28,16 +28,16 @@ import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
 import io.zeebe.raft.backpressure.BackpressureHelper;
 import io.zeebe.raft.protocol.AppendRequest;
+import io.zeebe.servicecontainer.*;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.*;
 import io.zeebe.util.sched.clock.ActorClock;
-import io.zeebe.util.sched.future.ActorFuture;
 import org.slf4j.Logger;
 
 /**
  * Per-follower replication controller
  */
-public class MemberReplicateLogController extends Actor
+public class MemberReplicateLogController extends Actor implements Service<Void>
 {
     /**
      * TODO: remove constant, follower should tell us on join or other request
@@ -88,9 +88,16 @@ public class MemberReplicateLogController extends Actor
         return name;
     }
 
-    public ActorFuture<Void> close()
+    @Override
+    public void start(ServiceStartContext startContext)
     {
-        return actor.close();
+        startContext.async(startContext.getScheduler().submitActor(this, true));
+    }
+
+    @Override
+    public void stop(ServiceStopContext stopContext)
+    {
+        stopContext.async(actor.close());
     }
 
     @Override
@@ -377,8 +384,9 @@ public class MemberReplicateLogController extends Actor
         }
     }
 
-    private boolean hasNextEvent()
+    @Override
+    public Void get()
     {
-        return bufferedEvent != null || reader.hasNext();
+        return null;
     }
 }

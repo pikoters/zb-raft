@@ -19,6 +19,9 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.BufferedLogStorageAppender;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.RaftMember;
+import io.zeebe.raft.Raft;
+import io.zeebe.raft.RaftMember;
+import io.zeebe.raft.controller.AppendRaftEventController;
 import io.zeebe.raft.protocol.AppendResponse;
 import io.zeebe.raft.protocol.ConfigurationRequest;
 import io.zeebe.transport.RemoteAddress;
@@ -31,27 +34,44 @@ import java.util.Arrays;
 
 public class LeaderState extends AbstractRaftState
 {
-    private final ActorControl actor;
-
     private ActorCondition appendCondition;
     private LogStream logStream;
 
-    public LeaderState(final Raft raft, final BufferedLogStorageAppender appender, ActorControl actorControl)
+    private AppendRaftEventController appendRaftEventController;
+
+    public LeaderState(Raft raft, ActorControl raftActor)
     {
-        super(raft, appender);
-        this.actor = actorControl;
-        logStream = raft.getLogStream();
+        super(raft, raftActor);
     }
 
     @Override
-    public void reset()
+    protected void onEnterState()
     {
-        super.reset();
+        super.onEnterState();
+
         if (raft.getMembers().isEmpty())
         {
-            appendCondition = actor.onCondition("append-condition", this::commitPositionOnSingleNode);
+            appendCondition = raftActor.onCondition("append-condition", this::commitPositionOnSingleNode);
             logStream.registerOnAppendCondition(appendCondition);
         }
+    }
+
+    @Override
+    protected void onLeaveState()
+    {
+        removeOnAppendCondition();
+        super.onLeaveState();
+    }
+
+    private void removeOnAppendCondition()
+    {
+        if (appendCondition != null)
+        {
+            appendCondition.cancel();
+            logStream.removeOnAppendCondition(appendCondition);
+        }
+
+        appendCondition = null;
     }
 
     @Override
@@ -75,6 +95,10 @@ public class LeaderState extends AbstractRaftState
                 else
                 {
                     leave(serverOutput, remoteAddress, requestId, socketAddress);
+                    // create new socket address object as it is stored in a map
+                    raft.joinMember(serverOutput, remoteAddress, requestId, new SocketAddress(socketAddress));
+                    // remove condition
+                    removeOnAppendCondition();
                 }
             }
             else
@@ -156,7 +180,7 @@ public class LeaderState extends AbstractRaftState
         // position is the next position which is written. This means in a single node cluster the log
         // already committed an event which will be written in the future. `- 1` is a hotfix for this.
         // see https://github.com/zeebe-io/zeebe/issues/501
-        positions[memberSize] = raft.getLogStream().getCurrentAppenderPosition() - 1;
+        positions[memberSize] = logStream.getLogStorageAppender().getCurrentAppenderPosition() - 1;
 
         Arrays.sort(positions);
 
@@ -173,7 +197,7 @@ public class LeaderState extends AbstractRaftState
 
     private void commitPositionOnSingleNode()
     {
-        final long commitPosition = raft.getLogStream().getCurrentAppenderPosition() - 1;
+        final long commitPosition = logStream.getLogStorageAppender().getCurrentAppenderPosition() - 1;
         final long initialEventPosition = raft.getInitialEventPosition();
 
         if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)

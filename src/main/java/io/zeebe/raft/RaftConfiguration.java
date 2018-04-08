@@ -21,7 +21,6 @@ public class RaftConfiguration
 {
     protected int heartbeatIntervalMs = 250;
     protected int electionIntervalMs = 1000;
-    protected int flushIntervalMs = 10;
 
     public int getHeartbeatIntervalMs()
     {
@@ -50,28 +49,10 @@ public class RaftConfiguration
         return this;
     }
 
-    public int getFlushIntervalMs()
-    {
-        return flushIntervalMs;
-    }
-
-    public Duration getFlushInterval()
-    {
-        return Duration.ofMillis(flushIntervalMs);
-    }
-
-    public RaftConfiguration setFlushIntervalMs(final int flushIntervalMs)
-    {
-        this.flushIntervalMs = flushIntervalMs;
-        return this;
-    }
-
-
     @Override
     public String toString()
     {
         return "RaftConfiguration{" + "heartbeatIntervalMs=" + heartbeatIntervalMs +
-            ", electionIntervalMs=" + electionIntervalMs +
-            ", getFlushIntervalMs=" + flushIntervalMs + '}';
+            ", electionIntervalMs=" + electionIntervalMs + '}';
     }
 }

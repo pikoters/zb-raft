@@ -15,12 +15,20 @@
  */
 package io.zeebe.raft;
 
+import java.util.Collection;
+
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.transport.SocketAddress;
-import org.agrona.DirectBuffer;
 
-@FunctionalInterface
 public interface RaftStateListener
 {
-    void onStateChange(int partitionId, DirectBuffer topicName, SocketAddress socketAddress, RaftState raftState);
+    default void onStateChange(Raft raft, RaftState raftState)
+    {
+
+    }
+
+    default void onMembersChanged(Raft raft, Collection<SocketAddress> addresses)
+    {
+
+    }
 }

@@ -15,19 +15,19 @@
  */
 package io.zeebe.raft.controller;
 
+import java.time.Duration;
+
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
+import io.zeebe.servicecontainer.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
-import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.slf4j.Logger;
 
-import java.time.Duration;
-
-public class OpenLogStreamController
+public class LeaderCommitInitialEvent implements Service<Void>
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     public static final Duration COMMIT_TIMEOUT = Duration.ofMinutes(15);
@@ -36,17 +36,19 @@ public class OpenLogStreamController
     private final Raft raft;
     private final InitialEvent initialEvent = new InitialEvent();
     private final ActorCondition actorCondition;
+    private final LogStream logStream;
+    private final CompletableActorFuture<Void> commitFuture = new CompletableActorFuture<>();
 
     private long position;
-    private long retries = 10;
     private boolean isCommited;
 
-    public OpenLogStreamController(final Raft raft, ActorControl actorControl)
+    public LeaderCommitInitialEvent(final Raft raft, ActorControl actorControl)
     {
         this.raft = raft;
         this.actor = actorControl;
 
         this.actorCondition = actor.onCondition("raft-event-commited", this::commited);
+        this.logStream = raft.getLogStream();
     }
 
     public long getPosition()
@@ -54,33 +56,17 @@ public class OpenLogStreamController
         return position;
     }
 
-    public void open()
+    @Override
+    public void start(ServiceStartContext startContext)
     {
-        if (hasRetriesLeft())
-        {
-            final LogStream logStream = raft.getLogStream();
+        startContext.async(commitFuture);
+        actor.call(this::appendInitialEvent);
+    }
 
-            final ActorFuture<Void> future = logStream.openLogStreamController();
-
-            actor.runOnCompletion(future, ((aVoid, throwable) ->
-            {
-                if (throwable == null)
-                {
-                    retries = 10;
-                    actor.submit(this::appendInitialEvent);
-                }
-                else
-                {
-                    LOG.warn("Failed to open log stream controller.", throwable);
-                    decreaseRetries();
-                    actor.submit(this::open);
-                }
-            }));
-        }
-        else
-        {
-            raft.becomeFollower();
-        }
+    @Override
+    public void stop(ServiceStopContext stopContext)
+    {
+        actorCondition.cancel();
     }
 
     private void appendInitialEvent()
@@ -91,7 +77,8 @@ public class OpenLogStreamController
             LOG.debug("Initial event for term {} was appended on position {}", raft.getTerm(), position);
             this.position = position;
 
-            raft.getLogStream().registerOnCommitPositionUpdatedCondition(actorCondition);
+            logStream.registerOnCommitPositionUpdatedCondition(actorCondition);
+
             actor.runDelayed(COMMIT_TIMEOUT, () ->
             {
                 if (!isCommited)
@@ -99,7 +86,6 @@ public class OpenLogStreamController
                     actor.submit(() -> appendInitialEvent());
                 }
             });
-
         }
         else
         {
@@ -115,44 +101,19 @@ public class OpenLogStreamController
             LOG.debug("Initial event for term {} was committed on position {}", raft.getTerm(), position);
 
             isCommited = true;
-            raft.getLogStream().removeOnCommitPositionUpdatedCondition(actorCondition);
+            commitFuture.complete(null);
+            actorCondition.cancel();
         }
-    }
-
-    public ActorFuture<Void> close()
-    {
-        final CompletableActorFuture<Void> completableActorFuture = new CompletableActorFuture<>();
-        final LogStream logStream = raft.getLogStream();
-        logStream.removeOnCommitPositionUpdatedCondition(actorCondition);
-        actor.runOnCompletion(logStream.closeLogStreamController(), ((aVoid, throwable) ->
-        {
-            if (throwable != null)
-            {
-                completableActorFuture.completeExceptionally(throwable);
-                LOG.warn("Failed to close log stream controller", throwable);
-            }
-            else
-            {
-                completableActorFuture.complete(null);
-            }
-        }));
-        retries = 10;
-        return completableActorFuture;
     }
 
     public boolean isPositionCommited()
     {
-        return position >= 0 && position <= raft.getLogStream().getCommitPosition();
+        return position >= 0 && position <= logStream.getCommitPosition();
     }
 
-    public boolean hasRetriesLeft()
+    @Override
+    public Void get()
     {
-        return retries > 0;
+        return null;
     }
-
-    public void decreaseRetries()
-    {
-        retries--;
-    }
-
 }

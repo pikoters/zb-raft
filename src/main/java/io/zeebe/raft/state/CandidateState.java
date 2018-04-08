@@ -15,22 +15,38 @@
  */
 package io.zeebe.raft.state;
 
-import io.zeebe.raft.BufferedLogStorageAppender;
 import io.zeebe.raft.Raft;
+import io.zeebe.raft.controller.*;
 import io.zeebe.raft.protocol.AppendRequest;
+import io.zeebe.util.sched.ActorControl;
 
-public class CandidateState extends AbstractRaftState
+public class CandidateState extends ElectionState
 {
+    protected final ConsensusRequestController voteController;
 
-    public CandidateState(final Raft raft, final BufferedLogStorageAppender appender)
+    public CandidateState(Raft raft, ActorControl raftActor)
     {
-        super(raft, appender);
+        super(raft, raftActor);
+        voteController = new ConsensusRequestController(raft, raftActor, new VoteRequestHandler());
     }
 
     @Override
     public RaftState getState()
     {
         return RaftState.CANDIDATE;
+    }
+
+    @Override
+    protected void onLeaveState()
+    {
+        voteController.close();
+        super.onLeaveState();
+    }
+
+    @Override
+    protected void onElectionTimeout()
+    {
+        voteController.sendRequest();
     }
 
     @Override
@@ -43,5 +59,4 @@ public class CandidateState extends AbstractRaftState
             raft.becomeFollower();
         }
     }
-
 }

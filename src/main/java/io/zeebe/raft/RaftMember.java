@@ -17,9 +17,7 @@ package io.zeebe.raft;
 
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.controller.MemberReplicateLogController;
-import io.zeebe.transport.ClientTransport;
 import io.zeebe.transport.RemoteAddress;
-import io.zeebe.util.sched.ActorScheduler;
 
 public class RaftMember
 {
@@ -52,20 +50,5 @@ public class RaftMember
     public long getMatchPosition()
     {
         return matchPosition;
-    }
-
-    public void stopReplicationController()
-    {
-        if (replicationController != null)
-        {
-            replicationController.close();
-        }
-        replicationController = null;
-    }
-
-    public void startReplicationController(ActorScheduler actorScheduler, Raft raft, ClientTransport transport)
-    {
-        replicationController = new MemberReplicateLogController(raft, this, transport);
-        actorScheduler.submitActor(replicationController, true);
     }
 }

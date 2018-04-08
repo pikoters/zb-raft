@@ -38,13 +38,15 @@ import io.zeebe.raft.controller.MemberReplicateLogController;
 import io.zeebe.raft.event.RaftConfigurationEvent;
 import io.zeebe.raft.event.RaftConfigurationEventMember;
 import io.zeebe.raft.state.RaftState;
+import io.zeebe.servicecontainer.ServiceContainer;
+import io.zeebe.servicecontainer.testing.ServiceContainerRule;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorControl;
+import io.zeebe.util.sched.ActorScheduler;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
-import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
@@ -58,7 +60,8 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public static final FragmentHandler NOOP_FRAGMENT_HANDLER = (buffer, offset, length, streamId, isMarkedFailed) -> FragmentHandler.CONSUME_FRAGMENT_RESULT;
 
-    protected final ActorSchedulerRule actorSchedulerRule;
+    protected final ServiceContainer serviceContainer;
+    protected final ActorScheduler actorScheduler;
     protected final RaftConfiguration configuration;
     protected final SocketAddress socketAddress;
     protected final String topicName;
@@ -87,14 +90,15 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     protected final List<RaftState> raftStateChanges = new ArrayList<>();
     protected Set<Integer> interrupedStreams = Collections.synchronizedSet(new HashSet<>());
 
-    public RaftRule(final ActorSchedulerRule actorSchedulerRule, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
+    public RaftRule(final ServiceContainerRule serviceContainerRule, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
     {
-        this(actorSchedulerRule, new RaftConfiguration(), host, port, topicName, partition, members);
+        this(serviceContainerRule, new RaftConfiguration(), host, port, topicName, partition, members);
     }
 
-    public RaftRule(final ActorSchedulerRule actorSchedulerRule, final RaftConfiguration configuration, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
+    public RaftRule(final ServiceContainerRule serviceContainerRule, final RaftConfiguration configuration, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
     {
-        this.actorSchedulerRule = actorSchedulerRule;
+        this.actorScheduler = serviceContainerRule.getActorScheduler();
+        this.serviceContainer = serviceContainerRule.get();
         this.configuration = configuration;
         this.socketAddress = new SocketAddress(host, port);
 
@@ -114,38 +118,38 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             Dispatchers.create("serverSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender-" + name)
-                       .actorScheduler(actorSchedulerRule.get())
+                       .actorScheduler(actorScheduler)
                        .build();
 
         serverTransport =
             Transports.newServerTransport()
                       .sendBuffer(serverSendBuffer)
                       .bindAddress(socketAddress.toInetSocketAddress())
-                      .scheduler(actorSchedulerRule.get())
+                      .scheduler(actorScheduler)
                       .build(raftApiMessageHandler, raftApiMessageHandler);
 
         clientSendBuffer =
             Dispatchers.create("clientSendBuffer-" + name)
                        .bufferSize(32 * 1024 * 1024)
                        .subscriptions("sender-" + name)
-                       .actorScheduler(actorSchedulerRule.get())
+                       .actorScheduler(actorScheduler)
                        .build();
 
         clientTransport =
             Transports.newClientTransport()
                       .sendBuffer(clientSendBuffer)
                       .requestPoolSize(128)
-                      .scheduler(actorSchedulerRule.get())
+                      .scheduler(actorScheduler)
                       .build();
 
         logStream =
             LogStreams.createFsLogStream(wrapString(topicName), partition)
+                      .logName(String.format("%s-%d-%d", topicName, partition, socketAddress.port()))
                       .deleteOnClose(true)
                       .logDirectory(Files.createTempDirectory("raft-test-" + socketAddress.port() + "-").toString())
-                      .actorScheduler(actorSchedulerRule.get())
-                      .build();
-
-        logStream.open();
+                      .serviceContainer(serviceContainer)
+                      .build()
+                      .join();
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
         final OneToOneRingBufferChannel messageBuffer = new OneToOneRingBufferChannel(new UnsafeBuffer(new byte[(MemberReplicateLogController.REMOTE_BUFFER_SIZE) + RingBufferDescriptor.TRAILER_LENGTH]));
@@ -173,7 +177,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             }
         }).when(spyClientOutput).sendMessage(any(TransportMessage.class));
 
-        raft = new Raft(actorSchedulerRule.get(), configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
+        raft = new Raft(actorScheduler, configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
         {
             @Override
             protected void onActorStarting()
@@ -214,7 +218,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void schedule()
     {
-        actorSchedulerRule.get().submitActor(raft);
+        actorScheduler.submitActor(raft);
     }
 
     public SocketAddress getSocketAddress()

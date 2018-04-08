@@ -16,23 +16,33 @@
 package io.zeebe.raft;
 
 import io.zeebe.logstreams.impl.LogStorageAppender;
+import static io.zeebe.raft.RaftServiceNames.*;
+import static io.zeebe.util.EnsureUtil.ensureNotNull;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.stream.Collectors;
+
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.msgpack.value.ValueArray;
 import io.zeebe.raft.controller.*;
 import io.zeebe.raft.event.RaftConfigurationEventMember;
 import io.zeebe.raft.protocol.*;
 import io.zeebe.raft.state.*;
+import io.zeebe.servicecontainer.*;
 import io.zeebe.transport.*;
 import io.zeebe.transport.impl.actor.Receiver;
+import io.zeebe.util.LogUtil;
 import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.sched.*;
+import io.zeebe.util.sched.channel.ConcurrentQueueChannel;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
 import io.zeebe.util.sched.clock.ActorClock;
 import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
-import org.agrona.concurrent.MessageHandler;
+import org.agrona.concurrent.ManyToOneConcurrentLinkedQueue;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.slf4j.Logger;
 
@@ -54,58 +64,42 @@ import static io.zeebe.util.EnsureUtil.ensureNotNull;
  * </ul>
  *
  */
-public class Raft extends Actor implements ServerMessageHandler, ServerRequestHandler, MessageHandler
+public class Raft extends Actor implements ServerMessageHandler, ServerRequestHandler, Service<Raft>
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     private static final boolean IS_TRACE_ENABLED = LOG.isTraceEnabled();
 
+    private final ConcurrentQueueChannel<IncomingRaftRequest> requestQueue = new ConcurrentQueueChannel<>(new ManyToOneConcurrentLinkedQueue<>());
+
     // environment
-    private final ActorScheduler actorScheduler;
     private final OneToOneRingBufferChannel messageReceiveBuffer;
     private final RaftConfiguration configuration;
     private final SocketAddress socketAddress;
     private final ClientTransport clientTransport;
-    private final Random random = new Random();
+
+    private ServiceName<?> currentStateServiceName;
+    private RaftState state;
+    private JoinRaftController joinController;
 
     // persistent state
     private final LogStream logStream;
     private final RaftPersistentStorage persistentStorage;
 
     // volatile state
-    private final BufferedLogStorageAppender appender;
-    private AbstractRaftState state;
     private final Map<SocketAddress, RaftMember> memberLookup = new HashMap<>();
     private final List<RaftMember> members = new ArrayList<>();
     private final List<RaftStateListener> raftStateListeners = new ArrayList<>();
-
-    // controller
-    private ConfigurationController configurationController;
-    private AppendRaftEventController appendRaftEventController;
-
-    private OpenLogStreamController openLogStreamController;
-    private ConsensusRequestController pollController;
-    private ConsensusRequestController voteController;
-
-    // state message  handlers
-    private final FollowerState followerState;
-    private final CandidateState candidateState;
-    private final LeaderState leaderState;
 
     // reused entities
     private final TransportMessage transportMessage = new TransportMessage();
     private final ServerResponse serverResponse = new ServerResponse();
 
-    private final ConfigurationRequest configurationRequest = new ConfigurationRequest();
-    private final PollRequest pollRequest = new PollRequest();
-    private final VoteRequest voteRequest = new VoteRequest();
+    private ServiceStartContext serviceContext;
 
-    private final AppendRequest appendRequest = new AppendRequest();
-    private final AppendResponse appendResponse = new AppendResponse();
-    private ScheduledTimer electionTimer;
     private String actorName;
-    private long lastHeartBeatTime;
+    private String raftName;
 
-    public Raft(final ActorScheduler actorScheduler,
+    public Raft(final ServiceContainer serviceContainer,
             final RaftConfiguration configuration,
             final SocketAddress socketAddress,
             final LogStream logStream,
@@ -114,33 +108,155 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             final OneToOneRingBufferChannel messageReceiveBuffer,
             final RaftStateListener... listeners)
     {
-        this.actorScheduler = actorScheduler;
         this.configuration = configuration;
         this.socketAddress = socketAddress;
         this.logStream = logStream;
         this.clientTransport = clientTransport;
         this.persistentStorage = persistentStorage;
         this.messageReceiveBuffer = messageReceiveBuffer;
-        appender = new BufferedLogStorageAppender(this);
-        actorName = String.format("raft.%s.%s", logStream.getLogName(), socketAddress.toString());
-
-        followerState = new FollowerState(this, appender);
-        candidateState = new CandidateState(this, appender);
-        leaderState = new LeaderState(this, appender, actor);
+        actorName = String.format("%s.%s", logStream.getLogName(), socketAddress.toString());
+        raftName = logStream.getLogName();
 
         raftStateListeners.addAll(Arrays.asList(listeners));
-
-        followerState.reset();
-        state = followerState;
 
         LOG.info("Created raft with configuration: " + this.configuration);
     }
 
     @Override
-    public String getName()
+    public void start(ServiceStartContext startContext)
     {
-        return actorName;
+        this.serviceContext = startContext;
+        startContext.async(startContext.getScheduler().submitActor(this, true));
     }
+
+    @Override
+    public void stop(ServiceStopContext stopContext)
+    {
+        stopContext.async(actor.close());
+    }
+
+    @Override
+    protected void onActorStarted()
+    {
+        becomeFollower();
+
+        this.joinController = new JoinRaftController(this, actor);
+        final ActorFuture<Void> whenJoined = serviceContext.createService(joinServiceName(raftName), joinController)
+            .install();
+
+        actor.runOnCompletion(whenJoined, (v, t) ->
+        {
+            notifyRaftStateListeners();
+        });
+    }
+
+    // state transitions
+
+    public void becomeFollower()
+    {
+        final ActorFuture<Void> prevStateLeft;
+
+        if (currentStateServiceName != null)
+        {
+            prevStateLeft = serviceContext.removeService(currentStateServiceName);
+        }
+        else
+        {
+            prevStateLeft = CompletableActorFuture.completed(null);
+        }
+
+        actor.runOnCompletion(prevStateLeft, (v, t) ->
+        {
+            final ServiceName<RaftState> followerServiceName = followerServiceName(raftName, getTerm());
+            final FollowerState followerState = new FollowerState(this, actor);
+
+            actor.runOnCompletion(serviceContext.createService(followerServiceName, followerState).install(), (v2, t2) ->
+            {
+                if (t2 == null)
+                {
+                    this.state = RaftState.FOLLOWER;
+                    notifyRaftStateListeners();
+                }
+            });
+
+            currentStateServiceName = followerServiceName;
+        });
+    }
+
+    public void becomeCandidate()
+    {
+        actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
+        {
+            setTerm(getTerm() + 1);
+            setVotedFor(getSocketAddress());
+
+            final ServiceName<RaftState> candidateServiceName = candidateServiceName(raftName, getTerm());
+            final CandidateState candidateState = new CandidateState(this, actor);
+
+            final ActorFuture<Void> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
+                .dependency(joinServiceName(raftName))
+                .install();
+
+            actor.runOnCompletion(whenCandicate, (v2, t2) ->
+            {
+                if (t2 == null)
+                {
+                    this.state = RaftState.CANDIDATE;
+                    notifyRaftStateListeners();
+                }
+            });
+
+            currentStateServiceName = candidateServiceName;
+        });
+    }
+
+    public void becomeLeader()
+    {
+        actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
+        {
+            final int term = getTerm();
+
+            final ServiceName<Void> installOperationServiceName = leaderInstallServiceName(raftName, term);
+            final ServiceName<RaftState> leaderServiceName = leaderServiceName(raftName, term);
+            final ServiceName<Void> initialEventAppendedServiceName = leaderInitialEventAppendedServiceName(raftName, term);
+            final ServiceName<Void> openLogStreamServiceName = leaderOpenLogStreamServiceName(raftName, term);
+
+            final CompositeServiceBuilder installOperation = serviceContext.createComposite(installOperationServiceName);
+
+            installOperation.createService(leaderServiceName, new LeaderState(this, actor))
+                .dependency(joinServiceName(raftName))
+                .install();
+            installOperation.createService(openLogStreamServiceName, new LeaderOpenLogStreamAppenderService(logStream))
+                .install();
+            installOperation.createService(initialEventAppendedServiceName, new LeaderCommitInitialEvent(this, actor))
+                .dependency(openLogStreamServiceName)
+                .install();
+
+            for (RaftMember raftMember : members)
+            {
+                final ServiceName<Void> replicateLogControllerServiceName = replicateLogConrollerServiceName(raftName, term, raftMember.getRemoteAddress().getAddress());
+
+                installOperation.createService(replicateLogControllerServiceName, new MemberReplicateLogController(this, raftMember, clientTransport))
+                    .dependency(leaderServiceName)
+                    .install();
+            }
+
+            final ActorFuture<Void> whenLeader = installOperation.install();
+
+            actor.runOnCompletion(whenLeader, (v2, t2) ->
+            {
+                if (t == null)
+                {
+                    this.state = RaftState.LEADER;
+                    notifyMemberChangeListeners();
+                }
+            });
+
+            currentStateServiceName = installOperationServiceName;
+        });
+    }
+
+    // listeners
 
     public void registerRaftStateListener(final RaftStateListener listener)
     {
@@ -152,196 +268,26 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         actor.call(() -> raftStateListeners.remove(listener));
     }
 
-    private void notifyRaftStateListener(final RaftStateListener listener)
-    {
-        listener.onStateChange(logStream.getPartitionId(), logStream.getTopicName(), socketAddress, state.getState());
-    }
-
     public void notifyRaftStateListeners()
     {
-        // only propagate state changes if the member is joined
-        // otherwise members are already visible even if the join request was never accepted
-        if (configurationController.isJoined())
+        if (joinController.isJoined())
         {
-            raftStateListeners.forEach(this::notifyRaftStateListener);
+            raftStateListeners.forEach((l) -> LogUtil.catchAndLog(LOG, () ->
+                l.onStateChange(this, state)));
         }
     }
 
-    // state transitions
-
-    public void becomeFollower()
+    private void notifyMemberChangeListeners()
     {
-        actor.setSchedulingHints(SchedulingHints.ioBound((short) 0));
-
-        followerState.reset();
-        state = followerState;
-
-        openLogStreamController.close();
-        members.forEach((m) -> m.stopReplicationController());
-        pollController.close();
-        voteController.close();
-
-        scheduleElectionTimer();
-
-        notifyRaftStateListeners();
-
-        LOG.debug("Transitioned to follower in term {}", getTerm());
-    }
-
-    private void scheduleElectionTimer()
-    {
-        if (electionTimer != null)
+        if (joinController.isJoined())
         {
-            electionTimer.cancel();
+            final List<SocketAddress> memberAddresses = members.stream()
+                .map((rm) -> rm.getRemoteAddress().getAddress())
+                .collect(Collectors.toList());
+
+            raftStateListeners.forEach((l) -> LogUtil.catchAndLog(LOG, () ->
+                l.onMembersChanged(this, memberAddresses)));
         }
-        electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
-    }
-
-    public void becomeCandidate()
-    {
-        actor.setSchedulingHints(SchedulingHints.cpuBound(ActorPriority.REGULAR));
-
-        candidateState.reset();
-        state = candidateState;
-
-        openLogStreamController.close();
-        getMembers().forEach(RaftMember::stopReplicationController);
-        pollController.close();
-        voteController.sendRequest();
-
-        scheduleElectionTimer();
-
-        setTerm(getTerm() + 1);
-        setVotedFor(socketAddress);
-
-        notifyRaftStateListeners();
-
-        LOG.debug("Transitioned to candidate in term {}", getTerm());
-    }
-
-    public void becomeLeader()
-    {
-        actor.setSchedulingHints(SchedulingHints.cpuBound(ActorPriority.REGULAR));
-
-        leaderState.reset();
-        state = leaderState;
-
-        cancelElectionTimer();
-
-        members.forEach(m -> m.startReplicationController(actorScheduler, this, clientTransport));
-        openLogStreamController.open();
-        pollController.close();
-        voteController.close();
-
-        notifyRaftStateListeners();
-
-        LOG.debug("Transitioned to leader in term {}", getTerm());
-    }
-
-    private void cancelElectionTimer()
-    {
-        if (electionTimer != null)
-        {
-            electionTimer.cancel();
-            electionTimer = null;
-        }
-    }
-
-    @Override
-    protected void onActorStarting()
-    {
-        configurationController = new ConfigurationController(this, actor);
-        appendRaftEventController = new AppendRaftEventController(this, actor);
-
-        openLogStreamController = new OpenLogStreamController(this, actor);
-
-        pollController = new ConsensusRequestController(this, actor, new PollRequestHandler());
-        voteController = new ConsensusRequestController(this, actor, new VoteRequestHandler());
-
-        actor.consume(messageReceiveBuffer, () ->
-        {
-            messageReceiveBuffer.read(this, 1);
-
-            // when there are no more append requests immediately available,
-            // flush now and send the ack immediately
-            if (!messageReceiveBuffer.hasAvailable())
-            {
-                appender.flushAndAck();
-            }
-        });
-    }
-
-    @Override
-    protected void onActorStarted()
-    {
-        // start as follower
-        becomeFollower();
-
-        actor.submit(configurationController::join);
-
-        if (members.isEmpty())
-        {
-            // !!!! WE NEED TO CANCEL THE ELECTION TIMER !!!
-            // otherwise we will schedule the election twice
-            electionTimer.cancel();
-            actor.submit(this::electionTimeoutCallback);
-        }
-    }
-
-    private void electionTimeoutCallback()
-    {
-        if (getState() != RaftState.LEADER)
-        {
-            if (shouldElect() && configurationController.isJoined())
-            {
-                switch (getState())
-                {
-                    case FOLLOWER:
-                        LOG.debug("Triggering poll after election timeout reached");
-                        becomeFollower();
-                        // trigger a new poll immediately
-                        pollController.sendRequest();
-                        break;
-                    case CANDIDATE:
-                        LOG.debug("Triggering vote after election timeout reached");
-                        // close current vote before starting the next
-                        voteController.close();
-                        becomeCandidate();
-                        break;
-                }
-                LOG.debug("Election in state: {}", getState().name());
-            }
-            electionTimer = actor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
-        }
-    }
-
-    public void updateLastHeartBeatTime()
-    {
-        lastHeartBeatTime = ActorClock.currentTimeMillis();
-    }
-
-    @Override
-    protected void onActorClosing()
-    {
-        actor.runOnCompletion(openLogStreamController.close(), (v, t) ->
-        {
-            LOG.debug("Shutdown raft.");
-            pollController.close();
-            voteController.close();
-
-            leaderState.close();
-            followerState.close();
-            candidateState.close();
-
-            appender.close();
-
-            getMembers().forEach(RaftMember::stopReplicationController);
-        });
-    }
-
-    public ActorFuture<Void> close()
-    {
-        return actor.close();
     }
 
     public ActorFuture<Void> leave()
@@ -385,55 +331,18 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     }
 
     /**
-     * called in raft actor upon consumption of the message from the {@link #messageReceiveBuffer}
-     */
-    @Override
-    public void onMessage(int msgTypeId, MutableDirectBuffer buffer, int offset, int length)
-    {
-        if (IS_TRACE_ENABLED)
-        {
-            LOG.trace("Processing message");
-        }
-
-        if (appendRequest.tryWrap(buffer, offset, length))
-        {
-            state.appendRequest(appendRequest);
-        }
-        else if (appendResponse.tryWrap(buffer, offset, length))
-        {
-            state.appendResponse(appendResponse);
-        }
-    }
-
-    /**
      * called by the transport {@link Receiver}
      */
     @Override
     public boolean onRequest(final ServerOutput output, final RemoteAddress remoteAddress, final DirectBuffer buffer, final int offset, final int length, final long requestId)
     {
-        // make copy of request so that we can process async
-        // TODO: if we want we can pool these buffers but it is probably
-        // not even necessary since this is not data path
         final MutableDirectBuffer requestData = new UnsafeBuffer(new byte[length]);
         requestData.putBytes(0, buffer, offset, length);
 
-        actor.run(() ->
-        {
-            if (configurationRequest.tryWrap(requestData, 0, length))
-            {
-                state.configurationRequest(output, remoteAddress, requestId, configurationRequest);
-            }
-            else if (pollRequest.tryWrap(requestData, 0, length))
-            {
-                state.pollRequest(output, remoteAddress, requestId, pollRequest);
-            }
-            else if (voteRequest.tryWrap(requestData, 0, length))
-            {
-                state.voteRequest(output, remoteAddress, requestId, voteRequest);
-            }
-        });
-
-        return true;
+        return requestQueue.offer(new IncomingRaftRequest(output,
+            remoteAddress,
+            requestId,
+            requestData));
     }
 
 
@@ -467,7 +376,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public RaftState getState()
     {
-        return state.getState();
+        return state;
     }
 
     public LogStream getLogStream()
@@ -600,7 +509,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public void setMembers(final ValueArray<RaftConfigurationEventMember> members)
     {
-        this.members.forEach(RaftMember::stopReplicationController);
         this.members.clear();
         this.memberLookup.clear();
         persistentStorage.clearMembers();
@@ -608,10 +516,12 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         final Iterator<RaftConfigurationEventMember> iterator = members.iterator();
         while (iterator.hasNext())
         {
-            addMember(iterator.next().getSocketAddress());
+            addMember(iterator.next().getSocketAddress(), false);
         }
 
         persistentStorage.save();
+
+        notifyMemberChangeListeners();
     }
 
 
@@ -630,17 +540,20 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     {
         for (int i = 0; i < members.size(); i++)
         {
-            addMember(members.get(i));
+            addMember(members.get(i), false);
         }
 
         persistentStorage.save();
+
+        notifyMemberChangeListeners();
     }
 
     /**
      *
      * @param socketAddress the address of the new member, the object is stored so it cannot be reused
+     * @param b
      */
-    private void addMember(final SocketAddress socketAddress)
+    private void addMember(final SocketAddress socketAddress, boolean startReplcation)
     {
         ensureNotNull("Raft node socket address", socketAddress);
 
@@ -662,9 +575,15 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
             persistentStorage.addMember(socketAddress);
 
-            if (getState() == RaftState.LEADER)
+            if (startReplcation)
             {
-                member.startReplicationController(actorScheduler, this, clientTransport);
+                final int term = getTerm();
+                final ServiceName<RaftState> leaderServiceName = leaderServiceName(raftName, term);
+                final ServiceName<Void> replicateLogControllerServiceName = replicateLogConrollerServiceName(raftName, term, member.getRemoteAddress().getAddress());
+
+                serviceContext.createService(replicateLogControllerServiceName, new MemberReplicateLogController(this, member, clientTransport))
+                    .dependency(leaderServiceName)
+                    .install();
             }
         }
 
@@ -701,10 +620,21 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public void joinMember(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final SocketAddress socketAddress)
     {
         LOG.debug("New member {} joining the cluster", socketAddress);
-        addMember(socketAddress);
+        addMember(socketAddress, true);
         persistentStorage.save();
 
-        appendRaftEventController.appendEvent(serverOutput, remoteAddress, requestId);
+        final ServiceName<RaftState> leaderServiceName = leaderServiceName(raftName, getTerm());
+        final ServiceName<Void> appendRaftEventControllerServiceName = appendRaftEventControllerServiceName(raftName, getTerm(), socketAddress);
+
+        final AppendRaftEventController appendRaftEventController = new AppendRaftEventController(this,
+            actor,
+            serverOutput,
+            remoteAddress,
+            requestId);
+
+        serviceContext.createService(appendRaftEventControllerServiceName, appendRaftEventController)
+            .dependency(leaderServiceName)
+            .install();
     }
 
     public void removeMember(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final SocketAddress socketAddress)
@@ -729,8 +659,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public boolean isLogStorageAppenderOpen()
     {
-        final LogStorageAppender logStorageAppender = logStream.getLogStreamController();
-        return logStorageAppender != null && !logStorageAppender.isClosed();
+        return logStream.getLogStorageAppender() == null;
     }
 
     /**
@@ -755,15 +684,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public boolean isConfigurationEventCommitted()
     {
         return appendRaftEventController.isCommitted();
-    }
-
-    /**
-     * @return the next election timeout starting from now
-     */
-    public Duration nextElectionTimeout()
-    {
-        final int electionIntervalMs = configuration.getElectionIntervalMs();
-        return Duration.ofMillis(electionIntervalMs + (Math.abs(random.nextInt()) % electionIntervalMs));
     }
 
     /**
@@ -864,4 +784,40 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         });
     }
 
+    public int getPartitionId()
+    {
+        return logStream.getPartitionId();
+    }
+
+    public DirectBuffer getTopicName()
+    {
+        return getTopicName();
+    }
+
+    public int getReplicationFactor()
+    {
+        return replicationFactor;
+    }
+
+    @Override
+    public Raft get()
+    {
+        return this;
+    }
+
+    public ConcurrentQueueChannel<IncomingRaftRequest> getRequestQueue()
+    {
+        return requestQueue;
+    }
+
+    public OneToOneRingBufferChannel getMessageReceiveBuffer()
+    {
+        return messageReceiveBuffer;
+    }
+
+    @Override
+    public String getName()
+    {
+        return actorName;
+    }
 }

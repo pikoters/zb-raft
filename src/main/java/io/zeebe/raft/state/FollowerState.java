@@ -16,22 +16,47 @@
 package io.zeebe.raft.state;
 
 import io.zeebe.logstreams.impl.LoggedEventImpl;
-import io.zeebe.raft.BufferedLogStorageAppender;
 import io.zeebe.raft.Raft;
+import io.zeebe.raft.controller.ConsensusRequestController;
+import io.zeebe.raft.controller.PollRequestHandler;
 import io.zeebe.raft.protocol.AppendRequest;
+import io.zeebe.util.sched.*;
 
-public class FollowerState extends AbstractRaftState
+public class FollowerState extends ElectionState
 {
+    protected final ConsensusRequestController pollController;
 
-    public FollowerState(final Raft raft, final BufferedLogStorageAppender appender)
+    public FollowerState(Raft raft, ActorControl raftActor)
     {
-        super(raft, appender);
+        super(raft, raftActor);
+        pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler());
     }
 
     @Override
     public RaftState getState()
     {
         return RaftState.FOLLOWER;
+    }
+
+    @Override
+    protected void onEnterState()
+    {
+        super.onEnterState();
+        raftActor.setSchedulingHints(SchedulingHints.ioBound((short) 0));
+    }
+
+    @Override
+    protected void onLeaveState()
+    {
+        raftActor.setSchedulingHints(SchedulingHints.cpuBound(ActorPriority.REGULAR));
+        pollController.close();
+        super.onLeaveState();
+    }
+
+    @Override
+    protected void onElectionTimeout()
+    {
+        pollController.sendRequest();
     }
 
     @Override
@@ -49,6 +74,13 @@ public class FollowerState extends AbstractRaftState
             if (appender.isLastEvent(previousEventPosition, previousEventTerm))
             {
                 appender.appendEvent(appendRequest, event);
+
+                // if there are no more append requests immediately available,
+                // flush now and send the ack immediately
+                if (!messageBuffer.hasAvailable())
+                {
+                    appender.flushAndAck();
+                }
             }
             else
             {
