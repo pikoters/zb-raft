@@ -15,10 +15,15 @@
  */
 package io.zeebe.raft.controller;
 
-import io.zeebe.raft.Loggers;
-import io.zeebe.raft.Raft;
+import java.time.Duration;
+import java.util.List;
+import java.util.function.Consumer;
+
+import io.zeebe.raft.*;
 import io.zeebe.raft.protocol.ConfigurationRequest;
 import io.zeebe.raft.protocol.ConfigurationResponse;
+import io.zeebe.raft.state.RaftState;
+import io.zeebe.servicecontainer.*;
 import io.zeebe.transport.ClientResponse;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.util.sched.ActorControl;
@@ -27,10 +32,7 @@ import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
 
-import java.time.Duration;
-import java.util.function.Consumer;
-
-public class ConfigurationController
+public class RaftJoinedService implements Service<Void>
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
 
@@ -42,62 +44,75 @@ public class ConfigurationController
     private final ConfigurationResponse configurationResponse = new ConfigurationResponse();
 
     private final Raft raft;
+    private final RaftMembers raftMembers;
 
     // will not be reset to continue to select new members on every retry
     private int currentMember;
-    private boolean isJoined;
-    private CompletableActorFuture<Void> leaveFuture;
+    private final CompletableActorFuture<Void> whenJoinCompleted = new CompletableActorFuture<>();
+    private final CompletableActorFuture<Void> whenLeaveCompleted = new CompletableActorFuture<>();
 
-    public ConfigurationController(final Raft raft, ActorControl actorControl)
+    public RaftJoinedService(final Raft raft, ActorControl actorControl)
     {
         this.actor = actorControl;
         this.raft = raft;
+        raftMembers = raft.getRaftMembers();
+    }
+
+    @Override
+    public void start(ServiceStartContext startContext)
+    {
+        startContext.async(whenJoinCompleted);
+        actor.call(this::join);
+    }
+
+    @Override
+    public void stop(ServiceStopContext stopContext)
+    {
+        stopContext.async(whenLeaveCompleted);
+        actor.call(this::leave);
     }
 
     public void join()
     {
+        final Runnable onJoined = () ->
+        {
+            whenJoinCompleted.complete(null);
+            raft.notifyRaftStateListeners();
+        };
+
         sendConfigurationRequest((nextMember) ->
         {
             LOG.debug("Send join configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft);
-        }, () ->
-            {
-                LOG.debug("Joined single node cluster.");
-                isJoined = true;
-            }, () -> {
-                isJoined = true;
-                // as this will not trigger a state change in raft we have to notify listeners
-                // that this raft is now in a visible state
-                raft.notifyRaftStateListeners();
-            });
+
+        }, onJoined, onJoined);
     }
 
-    public void leave(CompletableActorFuture<Void> completableActorFuture)
+    public void leave()
     {
-        if (isJoined)
+        if (raft.getState() == RaftState.LEADER)
         {
-            leaveFuture = completableActorFuture;
-            sendConfigurationRequest((nextMember) ->
-            {
-                LOG.debug("Send leave configuration request to {}", nextMember);
-                configurationRequest.reset().setRaft(raft).setLeave();
-            }, () ->
-                {
-                    throw new UnsupportedOperationException("Signle node can't left cluster");
-                }, () ->
-                {
-                    isJoined = false;
+            whenLeaveCompleted.completeExceptionally(new UnsupportedOperationException("Leave not yet implemented for leader"));
+            return;
+        }
 
-                    // as this will not trigger a state change in raft we have to notify listeners
-                    // that this raft is now in a visible state
-                    raft.notifyRaftStateListeners();
-                    leaveFuture.complete(null);
-                });
-        }
-        else
+        final Runnable onLeaveSingleNodeCluster = () ->
         {
-            completableActorFuture.complete(null);
-        }
+            whenLeaveCompleted.completeExceptionally(new UnsupportedOperationException("Signle node can't leave cluster"));
+        };
+
+        final Runnable onLeaveCluster = () ->
+        {
+            raft.notifyRaftStateListeners();
+            whenLeaveCompleted.complete(null);
+        };
+
+        sendConfigurationRequest((nextMember) ->
+        {
+            LOG.debug("Send leave configuration request to {}", nextMember);
+            configurationRequest.reset().setRaft(raft).setLeave();
+
+        }, onLeaveSingleNodeCluster, onLeaveCluster);
     }
 
     private void sendConfigurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
@@ -127,7 +142,7 @@ public class ConfigurationController
                     if (!raft.mayStepDown(configurationResponse) && raft.isTermCurrent(configurationResponse))
                     {
                         // update members to maybe discover leader
-                        raft.addMembers(configurationResponse.getMembers());
+                        raft.addMembersWhenJoined(configurationResponse.getMembers());
 
                         if (configurationResponse.isSucceeded())
                         {
@@ -160,25 +175,27 @@ public class ConfigurationController
         }
     }
 
-    public boolean isJoined()
-    {
-        return isJoined;
-    }
-
     private RemoteAddress getNextMember()
     {
-        final int memberSize = raft.getMemberSize();
+        final List<RaftMember> memberList = raftMembers.getMemberList();
+        final int memberSize = memberList.size();
         if (memberSize > 0)
         {
             final int nextMember = currentMember % memberSize;
             currentMember++;
 
-            return raft.getMember(nextMember).getRemoteAddress();
+            return memberList.get(nextMember).getRemoteAddress();
         }
         else
         {
             return null;
         }
+    }
+
+    @Override
+    public Void get()
+    {
+        return null;
     }
 
 }

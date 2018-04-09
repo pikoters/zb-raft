@@ -16,7 +16,8 @@
 package io.zeebe.raft.state;
 
 import io.zeebe.raft.Raft;
-import io.zeebe.raft.controller.*;
+import io.zeebe.raft.controller.ConsensusRequestController;
+import io.zeebe.raft.controller.VoteRequestHandler;
 import io.zeebe.raft.protocol.AppendRequest;
 import io.zeebe.util.sched.ActorControl;
 
@@ -54,7 +55,7 @@ public class CandidateState extends ElectionState
     {
         if (raft.isTermCurrent(appendRequest))
         {
-            raft.updateLastHeartBeatTime();
+            heartbeat.updateLastHeartbeat();
             // received append request from new leader
             raft.becomeFollower();
         }

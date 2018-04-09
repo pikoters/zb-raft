@@ -62,7 +62,7 @@ public class FollowerState extends ElectionState
     @Override
     public void appendRequest(final AppendRequest appendRequest)
     {
-        raft.updateLastHeartBeatTime();
+        heartbeat.updateLastHeartbeat();
         raft.mayStepDown(appendRequest);
 
         final long previousEventPosition = appendRequest.getPreviousEventPosition();

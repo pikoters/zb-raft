@@ -6,6 +6,11 @@ import io.zeebe.transport.SocketAddress;
 
 public class RaftServiceNames
 {
+    public static ServiceName<Raft> raftServiceName(String raftName)
+    {
+        return ServiceName.newServiceName(String.format("raft.%s", raftName), Raft.class);
+    }
+
     public static ServiceName<Void> joinServiceName(String raftName)
     {
         return ServiceName.newServiceName(String.format("raft.%s.joinService", raftName), Void.class);
@@ -21,7 +26,7 @@ public class RaftServiceNames
         return ServiceName.newServiceName(String.format("raft.leader.%s.%d.openLogStream", raftName, term), Void.class);
     }
 
-    public static ServiceName<Void> leaderInitialEventAppendedServiceName(String raftName, int term)
+    public static ServiceName<Void> leaderInitialEventCommittedServiceName(String raftName, int term)
     {
         return ServiceName.newServiceName(String.format("raft.leader.%s.%d.initialEventCommitted", raftName, term), Void.class);
     }
@@ -29,11 +34,6 @@ public class RaftServiceNames
     public static ServiceName<Void> replicateLogConrollerServiceName(String raftName, int term, SocketAddress follower)
     {
         return ServiceName.newServiceName(String.format("raft.leader.%s.%d.replicate.%s", raftName, term, follower), Void.class);
-    }
-
-    public static ServiceName<Void> appendRaftEventControllerServiceName(String raftName, int term, SocketAddress member)
-    {
-        return ServiceName.newServiceName(String.format("raft.leader.%s.%d.appendRaftEvent.%s", raftName, term, member), Void.class);
     }
 
     public static ServiceName<RaftState> leaderServiceName(String raftName, int term)

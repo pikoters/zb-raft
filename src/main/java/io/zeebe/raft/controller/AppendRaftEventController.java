@@ -19,7 +19,6 @@ import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.RaftEvent;
 import io.zeebe.raft.protocol.ConfigurationResponse;
-import io.zeebe.servicecontainer.*;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.transport.ServerOutput;
 import io.zeebe.util.sched.ActorCondition;
@@ -28,7 +27,7 @@ import org.slf4j.Logger;
 
 import java.time.Duration;
 
-public class AppendRaftEventController implements Service<Void>
+public class AppendRaftEventController
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     public static final Duration COMMIT_TIMEOUT = Duration.ofSeconds(15);
@@ -43,41 +42,26 @@ public class AppendRaftEventController implements Service<Void>
     private long position;
 
     // response state
-    private final ServerOutput serverOutput;
-    private final RemoteAddress remoteAddress;
-    private final long requestId;
-
+    private ServerOutput serverOutput;
+    private RemoteAddress remoteAddress;
+    private long requestId;
     private boolean isCommited;
 
-    public AppendRaftEventController(final Raft raft,
-        ActorControl actorControl,
-        final ServerOutput serverOutput,
-        final RemoteAddress remoteAddress,
-        final long requestId)
+    public AppendRaftEventController(final Raft raft, ActorControl actorControl)
     {
         this.raft = raft;
         this.actor = actorControl;
-        this.serverOutput = serverOutput;
-        this.remoteAddress = remoteAddress;
-        this.requestId = requestId;
 
         this.actorCondition = actor.onCondition("raft-event-commited", this::commited);
     }
 
-    @Override
-    public void start(ServiceStartContext startContext)
+    public void appendEvent(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId)
     {
-        actor.call(this::appendEvent);
-    }
+        // this has to happen immediately so multiple membership request are not accepted
+        this.serverOutput = serverOutput;
+        this.remoteAddress = remoteAddress;
+        this.requestId = requestId;
 
-    @Override
-    public void stop(ServiceStopContext stopContext)
-    {
-        actorCondition.cancel();
-    }
-
-    public void appendEvent()
-    {
         final long position = raftEvent.tryWrite(raft);
         if (position >= 0)
         {
@@ -87,14 +71,14 @@ public class AppendRaftEventController implements Service<Void>
             {
                 if (!isCommited)
                 {
-                    actor.submit(this::appendEvent);
+                    actor.submit(() -> appendEvent(serverOutput, remoteAddress, requestId));
                 }
             });
         }
         else
         {
             LOG.debug("Failed to append raft event");
-            actor.submit(this::appendEvent);
+            actor.submit(() -> appendEvent(serverOutput, remoteAddress, requestId));
         }
     }
 
@@ -108,7 +92,7 @@ public class AppendRaftEventController implements Service<Void>
             acceptConfigurationRequest();
 
             isCommited = true;
-            actorCondition.cancel();
+            raft.getLogStream().removeOnCommitPositionUpdatedCondition(actorCondition);
         }
     }
 
@@ -129,11 +113,5 @@ public class AppendRaftEventController implements Service<Void>
     public long getPosition()
     {
         return position;
-    }
-
-    @Override
-    public Void get()
-    {
-        return null;
     }
 }

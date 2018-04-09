@@ -70,8 +70,11 @@ public class MemberReplicateLogController extends Actor implements Service<Void>
     private ActorCondition appenderCondition;
     private final String name;
 
+    private RaftMember member;
+
     public MemberReplicateLogController(Raft raft, RaftMember member, ClientTransport clientTransport)
     {
+        this.member = member;
         this.remoteAddress = member.getRemoteAddress();
         this.name = String.format("raft-repl-%s-%s", raft.getName(), remoteAddress.toString());
 
@@ -103,6 +106,8 @@ public class MemberReplicateLogController extends Actor implements Service<Void>
     @Override
     protected void onActorStarted()
     {
+        member.setReplicationController(this);
+
         if (IS_TRACE_ENABLED)
         {
             LOG.trace("started");
@@ -118,6 +123,8 @@ public class MemberReplicateLogController extends Actor implements Service<Void>
     @Override
     protected void onActorClosing()
     {
+        member.setReplicationController(null);
+
         raft.getLogStream().removeOnCommitPositionUpdatedCondition(appenderCondition);
     }
 

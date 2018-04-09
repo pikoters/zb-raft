@@ -181,7 +181,7 @@ public class BufferedLogStorageAppender
                 {
                     // update configuration
                     event.readValue(configuration);
-                    raft.setMembers(configuration.members());
+                    raft.replaceMembersOnConfigurationChange(configuration.members());
                 }
             }
             else

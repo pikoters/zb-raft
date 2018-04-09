@@ -15,16 +15,16 @@
  */
 package io.zeebe.raft;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.raft.util.RaftClusterRule;
 import io.zeebe.raft.util.RaftRule;
 import io.zeebe.servicecontainer.testing.ServiceContainerRule;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.junit.*;
-
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 public class RaftFiveNodesTest
 {

@@ -15,33 +15,31 @@
  */
 package io.zeebe.raft.state;
 
+import java.util.Arrays;
+import java.util.List;
+
 import io.zeebe.logstreams.log.LogStream;
-import io.zeebe.raft.BufferedLogStorageAppender;
-import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftMember;
-import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftMember;
+import io.zeebe.raft.*;
 import io.zeebe.raft.controller.AppendRaftEventController;
 import io.zeebe.raft.protocol.AppendResponse;
 import io.zeebe.raft.protocol.ConfigurationRequest;
-import io.zeebe.transport.RemoteAddress;
-import io.zeebe.transport.ServerOutput;
-import io.zeebe.transport.SocketAddress;
+import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 
-import java.util.Arrays;
-
 public class LeaderState extends AbstractRaftState
 {
-    private ActorCondition appendCondition;
-    private LogStream logStream;
+    private final AppendRaftEventController configurationChangeController;
 
-    private AppendRaftEventController appendRaftEventController;
+    private ActorCondition appendCondition;
+
+    private boolean initialEventCommitted = false;
+    private long initialEventPosition = -1;
 
     public LeaderState(Raft raft, ActorControl raftActor)
     {
         super(raft, raftActor);
+        this.configurationChangeController = new AppendRaftEventController(raft, raftActor);
     }
 
     @Override
@@ -49,10 +47,9 @@ public class LeaderState extends AbstractRaftState
     {
         super.onEnterState();
 
-        if (raft.getMembers().isEmpty())
+        if (raftMembers.getMemberSize() == 0)
         {
-            appendCondition = raftActor.onCondition("append-condition", this::commitPositionOnSingleNode);
-            logStream.registerOnAppendCondition(appendCondition);
+            createOnAppendContition();
         }
     }
 
@@ -61,6 +58,15 @@ public class LeaderState extends AbstractRaftState
     {
         removeOnAppendCondition();
         super.onLeaveState();
+    }
+
+    private void createOnAppendContition()
+    {
+        if (appendCondition == null)
+        {
+            appendCondition = raftActor.onCondition("append-condition", this::commitPositionOnSingleNode);
+            logStream.registerOnAppendCondition(appendCondition);
+        }
     }
 
     private void removeOnAppendCondition()
@@ -85,7 +91,7 @@ public class LeaderState extends AbstractRaftState
     {
         if (!raft.mayStepDown(configurationRequest))
         {
-            if (raft.isInitialEventCommitted() && raft.isConfigurationEventCommitted())
+            if (initialEventCommitted && configurationChangeController.isCommitted())
             {
                 final SocketAddress socketAddress = configurationRequest.getSocketAddress();
                 if (configurationRequest.isJoinRequest())
@@ -95,10 +101,6 @@ public class LeaderState extends AbstractRaftState
                 else
                 {
                     leave(serverOutput, remoteAddress, requestId, socketAddress);
-                    // create new socket address object as it is stored in a map
-                    raft.joinMember(serverOutput, remoteAddress, requestId, new SocketAddress(socketAddress));
-                    // remove condition
-                    removeOnAppendCondition();
                 }
             }
             else
@@ -110,33 +112,40 @@ public class LeaderState extends AbstractRaftState
 
     private void join(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, SocketAddress socketAddress)
     {
-        if (raft.isMember(socketAddress))
+        if (raftMembers.hasMember(socketAddress))
         {
             acceptConfigurationRequest(serverOutput, remoteAddress, requestId);
         }
         else
         {
             // create new socket address object as it is stored in a map
-            raft.joinMember(serverOutput, remoteAddress, requestId, new SocketAddress(socketAddress));
-            // remove condition
-            logStream.removeOnAppendCondition(appendCondition);
+            if (raft.joinMember(new SocketAddress(socketAddress)))
+            {
+                configurationChangeController.appendEvent(serverOutput, remoteAddress, requestId);
+
+                // remove condition
+                removeOnAppendCondition();
+            }
         }
     }
 
     private void leave(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, SocketAddress socketAddress)
     {
-        if (!raft.isMember(socketAddress))
+        if (!raftMembers.hasMember(socketAddress))
         {
             acceptConfigurationRequest(serverOutput, remoteAddress, requestId);
         }
         else
         {
-            raft.removeMember(serverOutput, remoteAddress, requestId, socketAddress);
-
-            if (raft.getMembers().isEmpty())
+            if (raft.leaveMember(socketAddress))
             {
-                // commit on single node again
-                logStream.registerOnAppendCondition(appendCondition);
+                configurationChangeController.appendEvent(serverOutput, remoteAddress, requestId);
+
+                // re-add append condition
+                if (raftMembers.getMemberSize() == 0)
+                {
+                    createOnAppendContition();
+                }
             }
         }
     }
@@ -149,7 +158,7 @@ public class LeaderState extends AbstractRaftState
             final boolean succeeded = appendResponse.isSucceeded();
             final long eventPosition = appendResponse.getPreviousEventPosition();
 
-            final RaftMember member = raft.getMember(appendResponse.getSocketAddress());
+            final RaftMember member = raftMembers.getMemberBySocketAddress(appendResponse.getSocketAddress());
 
             if (member != null)
             {
@@ -168,12 +177,14 @@ public class LeaderState extends AbstractRaftState
 
     private void commit()
     {
-        final int memberSize = raft.getMemberSize();
+        final List<RaftMember> memberList = raftMembers.getMemberList();
 
+        final int memberSize = memberList.size();
         final long[] positions = new long[memberSize + 1];
+
         for (int i = 0; i < memberSize; i++)
         {
-            positions[i] = raft.getMember(i).getMatchPosition();
+            positions[i] = memberList.get(i).getMatchPosition();
         }
 
         // TODO(menski): `raft.getLogStream().getCurrentAppenderPosition()` is wrong as the current appender
@@ -185,7 +196,6 @@ public class LeaderState extends AbstractRaftState
         Arrays.sort(positions);
 
         final long commitPosition = positions[memberSize + 1 - raft.requiredQuorum()];
-        final long initialEventPosition = raft.getInitialEventPosition();
 
         final LogStream logStream = raft.getLogStream();
 
@@ -198,11 +208,20 @@ public class LeaderState extends AbstractRaftState
     private void commitPositionOnSingleNode()
     {
         final long commitPosition = logStream.getLogStorageAppender().getCurrentAppenderPosition() - 1;
-        final long initialEventPosition = raft.getInitialEventPosition();
 
         if (initialEventPosition >= 0 && commitPosition >= initialEventPosition && logStream.getCommitPosition() < commitPosition)
         {
             logStream.setCommitPosition(commitPosition);
         }
+    }
+
+    public void setInitialEventPosition(long position)
+    {
+        this.initialEventPosition = position;
+    }
+
+    public void setInitialEventCommitted()
+    {
+        this.initialEventCommitted = true;
     }
 }

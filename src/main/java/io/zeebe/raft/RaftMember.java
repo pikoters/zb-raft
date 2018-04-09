@@ -15,7 +15,6 @@
  */
 package io.zeebe.raft;
 
-import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.controller.MemberReplicateLogController;
 import io.zeebe.transport.RemoteAddress;
 
@@ -26,7 +25,7 @@ public class RaftMember
 
     private long matchPosition;
 
-    public RaftMember(final RemoteAddress remoteAddress, final LogStream logStream)
+    public RaftMember(final RemoteAddress remoteAddress)
     {
         this.remoteAddress = remoteAddress;
     }
@@ -50,5 +49,10 @@ public class RaftMember
     public long getMatchPosition()
     {
         return matchPosition;
+    }
+
+    public void setReplicationController(MemberReplicateLogController replicationController)
+    {
+        this.replicationController = replicationController;
     }
 }

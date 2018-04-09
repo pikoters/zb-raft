@@ -1,8 +1,5 @@
 package io.zeebe.raft.state;
 
-import java.time.Duration;
-import java.util.concurrent.ThreadLocalRandom;
-
 import io.zeebe.raft.Raft;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.ScheduledTimer;
@@ -10,7 +7,6 @@ import io.zeebe.util.sched.ScheduledTimer;
 public abstract class ElectionState extends AbstractRaftState
 {
     private ScheduledTimer scheduledElection;
-    private boolean skipNextElection = false;
 
     public ElectionState(Raft raft, ActorControl raftActor)
     {
@@ -21,7 +17,7 @@ public abstract class ElectionState extends AbstractRaftState
     protected void onEnterState()
     {
         super.onEnterState();
-        scheduledElection = raftActor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
+        scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
     }
 
     @Override
@@ -31,28 +27,14 @@ public abstract class ElectionState extends AbstractRaftState
         super.onLeaveState();
     }
 
-    @Override
-    protected void skipNextElection()
-    {
-        skipNextElection = true;
-    }
-
-    public Duration nextElectionTimeout()
-    {
-        final int electionIntervalMs = raft.getConfiguration().getElectionIntervalMs();
-        return Duration.ofMillis(electionIntervalMs + (Math.abs(ThreadLocalRandom.current().nextInt()) % electionIntervalMs));
-    }
-
     private void electionTimeoutCallback()
     {
-        scheduledElection = raftActor.runDelayed(nextElectionTimeout(), this::electionTimeoutCallback);
+        scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
 
-        if (!skipNextElection)
+        if (heartbeat.shouldElect())
         {
             onElectionTimeout();
         }
-
-        skipNextElection = false;
     }
 
     protected abstract void onElectionTimeout();

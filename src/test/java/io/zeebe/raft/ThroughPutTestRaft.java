@@ -116,7 +116,7 @@ public class ThroughPutTestRaft implements RaftStateListener
         final OneToOneRingBufferChannel messageBuffer = new OneToOneRingBufferChannel(new UnsafeBuffer(new byte[(MemberReplicateLogController.REMOTE_BUFFER_SIZE) + RingBufferDescriptor.TRAILER_LENGTH]));
 
         raft = new Raft(scheduler, configuration, socketAddress, logStream, clientTransport, persistentStorage, messageBuffer, this);
-        raft.addMembers(this.members.stream().map(ThroughPutTestRaft::getSocketAddress).collect(Collectors.toList()));
+        raft.addMembersWhenJoined(this.members.stream().map(ThroughPutTestRaft::getSocketAddress).collect(Collectors.toList()));
         raftApiMessageHandler.registerRaft(raft);
         scheduler.submitActor(raft);
     }

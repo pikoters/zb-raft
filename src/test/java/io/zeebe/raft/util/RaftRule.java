@@ -15,6 +15,7 @@
  */
 package io.zeebe.raft.util;
 
+import static io.zeebe.raft.RaftServiceNames.raftServiceName;
 import static io.zeebe.raft.state.RaftState.LEADER;
 import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
 import static io.zeebe.util.buffer.BufferUtil.wrapString;
@@ -39,13 +40,13 @@ import io.zeebe.raft.event.RaftConfigurationEvent;
 import io.zeebe.raft.event.RaftConfigurationEventMember;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.servicecontainer.ServiceContainer;
+import io.zeebe.servicecontainer.ServiceName;
 import io.zeebe.servicecontainer.testing.ServiceContainerRule;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.ActorScheduler;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
-import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -57,7 +58,6 @@ import org.mockito.stubbing.Answer;
 
 public class RaftRule extends ExternalResource implements RaftStateListener
 {
-
     public static final FragmentHandler NOOP_FRAGMENT_HANDLER = (buffer, offset, length, streamId, isMarkedFailed) -> FragmentHandler.CONSUME_FRAGMENT_RESULT;
 
     protected final ServiceContainer serviceContainer;
@@ -89,6 +89,8 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     protected final List<RaftState> raftStateChanges = new ArrayList<>();
     protected Set<Integer> interrupedStreams = Collections.synchronizedSet(new HashSet<>());
+
+    private ServiceName<Raft> raftServiceName;
 
     public RaftRule(final ServiceContainerRule serviceContainerRule, final String host, final int port, final String topicName, final int partition, final RaftRule... members)
     {
@@ -177,7 +179,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             }
         }).when(spyClientOutput).sendMessage(any(TransportMessage.class));
 
-        raft = new Raft(actorScheduler, configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
+        raft = new Raft(serviceContainer, configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
         {
             @Override
             protected void onActorStarting()
@@ -187,22 +189,21 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             }
         };
         raftApiMessageHandler.registerRaft(raft);
-        raft.addMembers(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
+        raft.addMembersWhenJoined(members.stream().map(RaftRule::getSocketAddress).collect(Collectors.toList()));
 
         uncommittedReader = new BufferedLogStreamReader(logStream, true);
         committedReader = new BufferedLogStreamReader(logStream, false);
 
-        schedule();
+        raftServiceName = raftServiceName(name);
+        serviceContainer.createService(raftServiceName, raft)
+            .install()
+            .join();
     }
 
     @Override
     protected void after()
     {
-        final ActorFuture<Void> close = raft.close();
-
-        while (!close.isDone())
-        {
-        }
+        serviceContainer.removeService(raftServiceName).join();
 
         logStream.close();
 
@@ -214,11 +215,6 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         uncommittedReader.close();
         committedReader.close();
-    }
-
-    public void schedule()
-    {
-        actorScheduler.submitActor(raft);
     }
 
     public SocketAddress getSocketAddress()
@@ -257,11 +253,16 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     }
 
     @Override
-    public void onStateChange(final int partitionId, DirectBuffer topicName, final SocketAddress socketAddress, final RaftState raftState)
+    public void onStateChange(Raft raft, RaftState raftState)
     {
+        final int partitionId = raft.getPartitionId();
+        final DirectBuffer topicName = raft.getTopicName();
+        final SocketAddress socketAddress = raft.getSocketAddress();
+
         assertThat(partitionId).isEqualTo(raft.getLogStream().getPartitionId());
         assertThat(topicName).isEqualByComparingTo(raft.getLogStream().getTopicName());
         assertThat(socketAddress).isEqualTo(raft.getSocketAddress());
+
         raftStateChanges.add(raftState);
     }
 

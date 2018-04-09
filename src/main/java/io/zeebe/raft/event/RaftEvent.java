@@ -15,6 +15,8 @@
  */
 package io.zeebe.raft.event;
 
+import java.util.List;
+
 import io.zeebe.logstreams.log.LogStreamWriter;
 import io.zeebe.logstreams.log.LogStreamWriterImpl;
 import io.zeebe.msgpack.value.ValueArray;
@@ -51,7 +53,8 @@ public class RaftEvent
         // add self also to configuration
         configurationMembers.add().setSocketAddress(raft.getSocketAddress());
 
-        for (final RaftMember member : raft.getMembers())
+        final List<RaftMember> memberList = raft.getRaftMembers().getMemberList();
+        for (final RaftMember member : memberList)
         {
             configurationMembers.add().setSocketAddress(member.getRemoteAddress().getAddress());
         }

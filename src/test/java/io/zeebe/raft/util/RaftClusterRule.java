@@ -15,9 +15,14 @@
  */
 package io.zeebe.raft.util;
 
-import io.zeebe.logstreams.log.BufferedLogStreamReader;
-import io.zeebe.logstreams.log.LogStream;
-import io.zeebe.logstreams.log.LoggedEvent;
+import static io.zeebe.protocol.clientapi.EventType.NOOP_EVENT;
+import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
+
+import java.util.*;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+
+import io.zeebe.logstreams.log.*;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.Loggers;
@@ -30,13 +35,6 @@ import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.*;
-import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
-
-import static io.zeebe.protocol.clientapi.EventType.NOOP_EVENT;
-import static io.zeebe.util.buffer.BufferUtil.bufferAsString;
 
 public class RaftClusterRule implements TestRule
 {

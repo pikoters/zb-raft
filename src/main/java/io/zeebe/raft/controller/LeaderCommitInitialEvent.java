@@ -21,6 +21,7 @@ import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
+import io.zeebe.raft.state.LeaderState;
 import io.zeebe.servicecontainer.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
@@ -32,6 +33,9 @@ public class LeaderCommitInitialEvent implements Service<Void>
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     public static final Duration COMMIT_TIMEOUT = Duration.ofMinutes(15);
 
+    private final Injector<LeaderState> leaderStateInjector = new Injector<>();
+
+    private final LeaderState leaderState;
     private final ActorControl actor;
     private final Raft raft;
     private final InitialEvent initialEvent = new InitialEvent();
@@ -42,18 +46,14 @@ public class LeaderCommitInitialEvent implements Service<Void>
     private long position;
     private boolean isCommited;
 
-    public LeaderCommitInitialEvent(final Raft raft, ActorControl actorControl)
+    public LeaderCommitInitialEvent(final Raft raft, ActorControl actorControl, LeaderState leaderState)
     {
         this.raft = raft;
         this.actor = actorControl;
+        this.leaderState = leaderState;
 
         this.actorCondition = actor.onCondition("raft-event-commited", this::commited);
         this.logStream = raft.getLogStream();
-    }
-
-    public long getPosition()
-    {
-        return position;
     }
 
     @Override
@@ -66,6 +66,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
     @Override
     public void stop(ServiceStopContext stopContext)
     {
+        logStream.removeOnAppendCondition(actorCondition);
         actorCondition.cancel();
     }
 
@@ -76,6 +77,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
         {
             LOG.debug("Initial event for term {} was appended on position {}", raft.getTerm(), position);
             this.position = position;
+            leaderState.setInitialEventPosition(position);
 
             logStream.registerOnCommitPositionUpdatedCondition(actorCondition);
 
@@ -102,7 +104,9 @@ public class LeaderCommitInitialEvent implements Service<Void>
 
             isCommited = true;
             commitFuture.complete(null);
+            logStream.removeOnAppendCondition(actorCondition);
             actorCondition.cancel();
+            leaderState.setInitialEventCommitted();
         }
     }
 
@@ -115,5 +119,11 @@ public class LeaderCommitInitialEvent implements Service<Void>
     public Void get()
     {
         return null;
+    }
+
+
+    public Injector<LeaderState> getLeaderStateInjector()
+    {
+        return leaderStateInjector;
     }
 }
