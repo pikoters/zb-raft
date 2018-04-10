@@ -56,6 +56,7 @@ public class LeaderState extends AbstractRaftState
     @Override
     protected void onLeaveState()
     {
+        configurationChangeController.close();
         removeOnAppendCondition();
         super.onLeaveState();
     }

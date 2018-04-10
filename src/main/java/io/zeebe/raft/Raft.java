@@ -528,7 +528,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public boolean isLogStorageAppenderOpen()
     {
-        return logStream.getLogStorageAppender() == null;
+        return logStream.getLogStorageAppender() != null;
     }
 
     /**

@@ -187,7 +187,6 @@ public class RaftFiveNodesTest
     }
 
     @Test
-    @Ignore
     public void shouldTruncateLog()
     {
         // given a log with two events committed

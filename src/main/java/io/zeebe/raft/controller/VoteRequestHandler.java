@@ -36,9 +36,9 @@ public class VoteRequestHandler implements ConsensusRequestHandler
     public BufferWriter createRequest(final Raft raft, final long lastEventPosition, final int lastTerm)
     {
         return voteRequest.reset()
-                          .setRaft(raft)
-                          .setLastEventPosition(lastEventPosition)
-                          .setLastEventTerm(lastTerm);
+            .setRaft(raft)
+            .setLastEventPosition(lastEventPosition)
+            .setLastEventTerm(lastTerm);
     }
 
     @Override
