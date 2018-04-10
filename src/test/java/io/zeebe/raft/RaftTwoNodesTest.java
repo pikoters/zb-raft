@@ -63,15 +63,14 @@ public class RaftTwoNodesTest
 
         // when
         final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
-        final Raft otherRaft = otherRafts[0].getRaft();
-        otherRaft.leave().join();
+        final RaftRule otherRaft = otherRafts[0];
+        otherRaft.closeRaft();
+        cluster.getRafts().remove(otherRaft);
 
         // then
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
 
-        assertThat(leader.getRaft().getMemberSize()).isEqualTo(cluster.getRafts().size() - 2);
-        assertThat(otherRaft.getMemberSize()).isEqualTo(cluster.getRafts().size() - 1);
-        assertThat(otherRaft.isJoined()).isFalse();
+        assertThat(leader.getRaft().getMemberSize()).isEqualTo(0);
     }
 
     @Test

@@ -71,16 +71,17 @@ public class FollowerState extends ElectionState
 
         if (raft.isTermCurrent(appendRequest))
         {
-            if (appender.isLastEvent(previousEventPosition, previousEventTerm))
+            final boolean lastEvent = appender.isLastEvent(previousEventPosition, previousEventTerm);
+            if (lastEvent)
             {
                 appender.appendEvent(appendRequest, event);
 
                 // if there are no more append requests immediately available,
                 // flush now and send the ack immediately
-                if (!messageBuffer.hasAvailable())
-                {
+//                if (!messageBuffer.hasAvailable())
+//                {
                     appender.flushAndAck();
-                }
+//                }
             }
             else
             {
