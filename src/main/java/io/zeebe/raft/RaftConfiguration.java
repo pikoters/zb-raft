@@ -21,6 +21,7 @@ public class RaftConfiguration
 {
     protected int heartbeatIntervalMs = 250;
     protected int electionIntervalMs = 1000;
+    protected int leaveTimeoutMs = 1000;
 
     public int getHeartbeatIntervalMs()
     {
@@ -46,6 +47,17 @@ public class RaftConfiguration
     public RaftConfiguration setElectionIntervalMs(final int electionIntervalMs)
     {
         this.electionIntervalMs = electionIntervalMs;
+        return this;
+    }
+
+    public int getLeaveTimeoutMs()
+    {
+        return leaveTimeoutMs;
+    }
+
+    public RaftConfiguration setLeaveTimeoutMs(int leaveTimeoutMs)
+    {
+        this.leaveTimeoutMs = leaveTimeoutMs;
         return this;
     }
 

@@ -65,7 +65,6 @@ public class RaftTwoNodesTest
         final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
         final RaftRule otherRaft = otherRafts[0];
         otherRaft.closeRaft();
-        cluster.getRafts().remove(otherRaft);
 
         // then
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
@@ -74,15 +73,16 @@ public class RaftTwoNodesTest
     }
 
     @Test
-    public void shouldReplicateAfterNodeLeavesCluster()
+    public void shouldCommitAfterNodeLeavesCluster()
     {
         // given
         final RaftRule leader = cluster.awaitLeader();
         cluster.awaitInitialEventCommittedOnAll(leader.getTerm());
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm(), raft1, raft2);
+
         final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
-        final Raft otherRaft = otherRafts[0].getRaft();
-        otherRaft.leave().join();
+        final RaftRule otherRaft = otherRafts[0];
+        otherRaft.closeRaft();
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
 
         // when
@@ -123,6 +123,9 @@ public class RaftTwoNodesTest
         // then
         final RaftRule follower = cluster.getRafts().get(0);
         assertThat(follower.getState()).isEqualTo(RaftState.FOLLOWER);
+
+        // bring back old leader so that we can leave without timeout
+        cluster.registerRaft(oldLeader);
     }
 
 }

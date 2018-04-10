@@ -69,19 +69,19 @@ public class RaftFiveNodesTest
 
         // then
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
-        assertThat(leader.getRaft().getMemberSize()).isEqualTo(cluster.getRafts().size() - 2);
+        assertThat(leader.getRaft().getMemberSize()).isEqualTo(3);
     }
 
     @Test
-    public void shouldReplicateAfterNodeLeavesCluster()
+    public void shouldCommitAfterNodeLeavesCluster()
     {
         // given
         final RaftRule leader = cluster.awaitLeader();
         cluster.awaitInitialEventCommittedOnAll(leader.getTerm());
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm(), raft1, raft2, raft3, raft4, raft5);
         final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
-        final Raft otherRaft = otherRafts[0].getRaft();
-        otherRaft.leave().join();
+        final RaftRule otherRaft = otherRafts[0];
+        otherRaft.closeRaft();
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
 
         // when
@@ -94,34 +94,7 @@ public class RaftFiveNodesTest
     }
 
     @Test
-    public void shouldAdjustQuourumOnLeavingCluster()
-    {
-        // given
-        final RaftRule leader = cluster.awaitLeader();
-        cluster.awaitInitialEventCommittedOnAll(leader.getTerm());
-        cluster.awaitRaftEventCommittedOnAll(leader.getTerm(), raft1, raft2, raft3, raft4, raft5);
-
-        // when
-        final RaftRule[] otherRafts = cluster.getOtherRafts(leader);
-
-        final int quorum = leader.getRaft().requiredQuorum();
-        for (int i = 0; i < quorum; i++)
-        {
-            final Raft otherRaft = otherRafts[i].getRaft();
-            otherRaft.leave().join();
-        }
-
-        // then we have a two node cluster
-        cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
-        assertThat(leader.getRaft().getMemberSize()).isEqualTo(1);
-        assertThat(leader.getRaft().requiredQuorum()).isEqualTo(2);
-
-        assertThat(otherRafts[3].getRaft().getMemberSize()).isEqualTo(1);
-        assertThat(otherRafts[3].getRaft().requiredQuorum()).isEqualTo(2);
-    }
-
-    @Test
-    public void shouldReplicateAfterOldQuorumLeavesClusterClean()
+    public void shouldCommitAfterOldQuorumLeavesClusterClean()
     {
         // given
         final RaftRule leader = cluster.awaitLeader();
@@ -132,9 +105,9 @@ public class RaftFiveNodesTest
         final int quorum = leader.getRaft().requiredQuorum();
         for (int i = 0; i < quorum; i++)
         {
-            final Raft otherRaft = otherRafts[i].getRaft();
-            otherRaft.leave().join();
-            cluster.getRafts().remove(otherRafts[i]);
+            final RaftRule raftRule = otherRafts[i];
+            raftRule.closeRaft();
+            cluster.getRafts().remove(raftRule);
         }
 
         // when

@@ -32,11 +32,11 @@ import io.zeebe.raft.controller.MemberReplicateLogController;
 import io.zeebe.raft.event.RaftConfigurationEvent;
 import io.zeebe.raft.state.RaftState;
 import io.zeebe.raft.util.InMemoryRaftPersistentStorage;
+import io.zeebe.servicecontainer.ServiceContainer;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
 import io.zeebe.util.sched.ActorScheduler;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
-import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
 
@@ -62,6 +62,7 @@ public class ThroughPutTestRaft implements RaftStateListener
     private InMemoryRaftPersistentStorage persistentStorage;
 
     protected final List<RaftState> raftStateChanges = new ArrayList<>();
+    private ServiceContainer serviceContainer;
 
     public ThroughPutTestRaft(SocketAddress socketAddress, ThroughPutTestRaft... members)
     {
@@ -73,8 +74,9 @@ public class ThroughPutTestRaft implements RaftStateListener
         this.socketAddress = socketAddress;
     }
 
-    public void open(ActorScheduler scheduler) throws IOException
+    public void open(ActorScheduler scheduler, ServiceContainer serviceContainer) throws IOException
     {
+        this.serviceContainer = serviceContainer;
         final RaftApiMessageHandler raftApiMessageHandler = new RaftApiMessageHandler();
 
         serverSendBuffer =
@@ -105,20 +107,29 @@ public class ThroughPutTestRaft implements RaftStateListener
 
         logStream =
             LogStreams.createFsLogStream(wrapString(topicName), partition)
+                      .logName(String.format("%s-%d-%s", topicName, partition, socketAddress))
                       .deleteOnClose(true)
                       .logDirectory(Files.createTempDirectory("raft-test-" + socketAddress.port() + "-").toString())
-                      .actorScheduler(scheduler)
-                      .build();
-
-        logStream.open();
+                      .serviceContainer(serviceContainer)
+                      .build()
+                      .join();
 
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
         final OneToOneRingBufferChannel messageBuffer = new OneToOneRingBufferChannel(new UnsafeBuffer(new byte[(MemberReplicateLogController.REMOTE_BUFFER_SIZE) + RingBufferDescriptor.TRAILER_LENGTH]));
 
-        raft = new Raft(scheduler, configuration, socketAddress, logStream, clientTransport, persistentStorage, messageBuffer, this);
+        raft = new Raft(serviceContainer,
+            configuration,
+            socketAddress,
+            logStream,
+            clientTransport,
+            persistentStorage,
+            messageBuffer,
+            this);
         raft.addMembersWhenJoined(this.members.stream().map(ThroughPutTestRaft::getSocketAddress).collect(Collectors.toList()));
         raftApiMessageHandler.registerRaft(raft);
-        scheduler.submitActor(raft);
+
+        serviceContainer.createService(RaftServiceNames.raftServiceName(raft.getName()), raft)
+            .install();
     }
 
     public void awaitWritable()
@@ -129,7 +140,7 @@ public class ThroughPutTestRaft implements RaftStateListener
 
     public void close()
     {
-        raft.close().join();
+        serviceContainer.removeService(RaftServiceNames.raftServiceName(raft.getName()));
 
         logStream.close();
 
@@ -191,7 +202,7 @@ public class ThroughPutTestRaft implements RaftStateListener
     }
 
     @Override
-    public void onStateChange(int partitionId, DirectBuffer topicName, SocketAddress socketAddress, RaftState raftState)
+    public void onStateChange(Raft raft, RaftState raftState)
     {
         System.out.println(String.format("%s became %s", socketAddress, raftState));
     }

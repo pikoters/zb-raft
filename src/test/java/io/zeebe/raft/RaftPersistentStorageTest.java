@@ -18,6 +18,7 @@ package io.zeebe.raft;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.zeebe.raft.util.*;
+import io.zeebe.servicecontainer.testing.ServiceContainerRule;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.junit.Rule;
 import org.junit.Test;
@@ -25,12 +26,13 @@ import org.junit.Test;
 public class RaftPersistentStorageTest
 {
     public ActorSchedulerRule actorScheduler = new ActorSchedulerRule();
+    public ServiceContainerRule serviceContainer = new ServiceContainerRule(actorScheduler);
 
-    public RaftRule raft1 = new RaftRule(actorScheduler, "localhost", 8001, "default", 0);
-    public RaftRule raft2 = new RaftRule(actorScheduler,  "localhost", 8002, "default", 0, raft1);
+    public RaftRule raft1 = new RaftRule(serviceContainer, "localhost", 8001, "default", 0);
+    public RaftRule raft2 = new RaftRule(serviceContainer, "localhost", 8002, "default", 0, raft1);
 
     @Rule
-    public RaftClusterRule cluster = new RaftClusterRule(actorScheduler, raft1, raft2);
+    public RaftClusterRule cluster = new RaftClusterRule(actorScheduler, serviceContainer, raft1, raft2);
 
 
     @Test

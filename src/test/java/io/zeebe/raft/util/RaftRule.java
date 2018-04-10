@@ -27,6 +27,7 @@ import static org.mockito.Mockito.*;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import io.zeebe.dispatcher.*;
@@ -35,6 +36,7 @@ import io.zeebe.logstreams.log.*;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
 import io.zeebe.raft.*;
+import io.zeebe.raft.Loggers;
 import io.zeebe.raft.controller.MemberReplicateLogController;
 import io.zeebe.raft.event.RaftConfigurationEvent;
 import io.zeebe.raft.event.RaftConfigurationEventMember;
@@ -44,6 +46,7 @@ import io.zeebe.servicecontainer.ServiceName;
 import io.zeebe.servicecontainer.testing.ServiceContainerRule;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.transport.*;
+import io.zeebe.util.LogUtil;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.ActorScheduler;
 import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
@@ -203,7 +206,10 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     @Override
     protected void after()
     {
-        closeRaft();
+        if (serviceContainer.hasService(raftServiceName))
+        {
+            closeRaft();
+        }
 
         logStream.close();
 
@@ -219,7 +225,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
     public void closeRaft()
     {
-        serviceContainer.removeService(raftServiceName).join();
+        LogUtil.catchAndLog(Loggers.RAFT_LOGGER, () -> serviceContainer.removeService(raftServiceName).get(5, TimeUnit.SECONDS));
     }
 
     public SocketAddress getSocketAddress()

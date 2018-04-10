@@ -17,12 +17,13 @@ package io.zeebe.raft;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 
 import io.zeebe.logstreams.log.*;
 import io.zeebe.raft.state.RaftState;
+import io.zeebe.servicecontainer.ServiceContainer;
+import io.zeebe.servicecontainer.impl.ServiceContainerImpl;
 import io.zeebe.transport.SocketAddress;
 import io.zeebe.util.collection.LongRingBuffer;
 import io.zeebe.util.sched.ActorScheduler;
@@ -75,6 +76,8 @@ public class ThroughputTest
             .setCpuBoundActorThreadCount(1)
             .build();
 
+        final ServiceContainer serviceContainer = new ServiceContainerImpl(scheduler);
+
         final ThroughPutTestRaft raft1 = new ThroughPutTestRaft(new SocketAddress("localhost", 51015));
         final ThroughPutTestRaft raft2 = new ThroughPutTestRaft(new SocketAddress("localhost", 51016), raft1);
         final ThroughPutTestRaft raft3 = new ThroughPutTestRaft(new SocketAddress("localhost", 51017), raft1);
@@ -86,9 +89,11 @@ public class ThroughputTest
         public void setUp() throws IOException
         {
             scheduler.start();
-            raft1.open(scheduler);
-            raft2.open(scheduler);
-            raft3.open(scheduler);
+            serviceContainer.start();
+
+            raft1.open(scheduler, serviceContainer);
+            raft2.open(scheduler, serviceContainer);
+            raft3.open(scheduler, serviceContainer);
 
             final List<Raft> rafts = Arrays.asList(raft1.getRaft(), raft2.getRaft(), raft3.getRaft());
 
@@ -115,6 +120,7 @@ public class ThroughputTest
             raft1.close();
             raft2.close();
             raft3.close();
+            serviceContainer.close(5000, TimeUnit.SECONDS);
             scheduler.stop().get();
         }
     }
