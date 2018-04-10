@@ -108,6 +108,11 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public void start(ServiceStartContext startContext)
     {
         this.serviceContext = startContext;
+
+        final RaftJoinService raftJoinedService = new RaftJoinService(this, actor);
+        serviceContext.createService(joinServiceName(raftName), raftJoinedService)
+            .install();
+
         startContext.async(startContext.getScheduler().submitActor(this, true));
     }
 
@@ -121,15 +126,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     protected void onActorStarted()
     {
         becomeFollower();
-
-        final RaftJoinedService raftJoinedService = new RaftJoinedService(this, actor);
-        final ActorFuture<Void> whenJoined = serviceContext.createService(joinServiceName(raftName), raftJoinedService)
-            .install();
-
-        actor.runOnCompletion(whenJoined, (v, t) ->
-        {
-            notifyRaftStateListeners();
-        });
     }
 
     // state transitions
@@ -156,6 +152,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             {
                 if (t2 == null)
                 {
+                    LOG.debug("Raft became follower in term {}", getTerm());
                     this.state = RaftState.FOLLOWER;
                     notifyRaftStateListeners();
                 }
@@ -188,6 +185,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             {
                 if (t2 == null)
                 {
+                    LOG.debug("Raft became candidate in term {}", getTerm());
                     this.state = RaftState.CANDIDATE;
                     notifyRaftStateListeners();
                 }
@@ -243,6 +241,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             {
                 if (t == null)
                 {
+                    LOG.debug("Raft became leader in term {}", getTerm());
                     this.state = RaftState.LEADER;
                     notifyRaftStateListeners();
                 }

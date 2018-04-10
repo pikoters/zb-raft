@@ -17,7 +17,15 @@ public abstract class ElectionState extends AbstractRaftState
     protected void onEnterState()
     {
         super.onEnterState();
-        scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
+
+        if (raftMembers.getMemberSize() == 0)
+        {
+            raftActor.submit(this::electionTimeoutCallback);
+        }
+        else
+        {
+            scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
+        }
     }
 
     @Override

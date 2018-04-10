@@ -16,7 +16,6 @@
 package io.zeebe.raft;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 
@@ -51,19 +50,6 @@ public class RaftSingleNodeTest
         assertThat(raftStateChanges).containsExactly(RaftState.FOLLOWER, RaftState.CANDIDATE, RaftState.LEADER);
     }
 
-
-    @Test
-    public void shouldNotLeaveCluster()
-    {
-        // given
-        final RaftRule leader = cluster.awaitLeader();
-        cluster.awaitInitialEventCommittedOnAll(leader.getTerm());
-
-        // expect
-//        assertThatThrownBy(() -> leader.getRaft().leave().join())
-//            .hasMessage("Can't leave as leader.")
-//            .hasCauseInstanceOf(UnsupportedOperationException.class);
-    }
 
     @Test
     public void shouldCommitEntries()

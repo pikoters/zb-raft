@@ -203,7 +203,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     @Override
     protected void after()
     {
-        serviceContainer.removeService(raftServiceName).join();
+        closeRaft();
 
         logStream.close();
 
@@ -215,6 +215,11 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         uncommittedReader.close();
         committedReader.close();
+    }
+
+    public void closeRaft()
+    {
+        serviceContainer.removeService(raftServiceName).join();
     }
 
     public SocketAddress getSocketAddress()

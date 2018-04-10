@@ -39,7 +39,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
     private final ActorControl actor;
     private final Raft raft;
     private final InitialEvent initialEvent = new InitialEvent();
-    private final ActorCondition actorCondition;
+    private ActorCondition commitPositionCondition;
     private final LogStream logStream;
     private final CompletableActorFuture<Void> commitFuture = new CompletableActorFuture<>();
 
@@ -52,7 +52,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
         this.actor = actorControl;
         this.leaderState = leaderState;
 
-        this.actorCondition = actor.onCondition("raft-event-commited", this::commited);
+        this.commitPositionCondition = actor.onCondition("raft-event-commited", this::commited);
         this.logStream = raft.getLogStream();
     }
 
@@ -66,8 +66,10 @@ public class LeaderCommitInitialEvent implements Service<Void>
     @Override
     public void stop(ServiceStopContext stopContext)
     {
-        logStream.removeOnAppendCondition(actorCondition);
-        actorCondition.cancel();
+        if (commitPositionCondition != null)
+        {
+            commitPositionCondition.cancel();
+        }
     }
 
     private void appendInitialEvent()
@@ -79,7 +81,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
             this.position = position;
             leaderState.setInitialEventPosition(position);
 
-            logStream.registerOnCommitPositionUpdatedCondition(actorCondition);
+            logStream.registerOnCommitPositionUpdatedCondition(commitPositionCondition);
 
             actor.runDelayed(COMMIT_TIMEOUT, () ->
             {
@@ -104,8 +106,8 @@ public class LeaderCommitInitialEvent implements Service<Void>
 
             isCommited = true;
             commitFuture.complete(null);
-            logStream.removeOnAppendCondition(actorCondition);
-            actorCondition.cancel();
+            commitPositionCondition.cancel();
+            commitPositionCondition = null;
             leaderState.setInitialEventCommitted();
         }
     }

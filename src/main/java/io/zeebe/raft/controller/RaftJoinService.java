@@ -32,7 +32,7 @@ import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.agrona.DirectBuffer;
 import org.slf4j.Logger;
 
-public class RaftJoinedService implements Service<Void>
+public class RaftJoinService implements Service<Void>
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
 
@@ -51,11 +51,11 @@ public class RaftJoinedService implements Service<Void>
     private final CompletableActorFuture<Void> whenJoinCompleted = new CompletableActorFuture<>();
     private final CompletableActorFuture<Void> whenLeaveCompleted = new CompletableActorFuture<>();
 
-    public RaftJoinedService(final Raft raft, ActorControl actorControl)
+    public RaftJoinService(final Raft raft, ActorControl actorControl)
     {
         this.actor = actorControl;
         this.raft = raft;
-        raftMembers = raft.getRaftMembers();
+        this.raftMembers = raft.getRaftMembers();
     }
 
     @Override
@@ -77,15 +77,15 @@ public class RaftJoinedService implements Service<Void>
         final Runnable onJoined = () ->
         {
             whenJoinCompleted.complete(null);
-            raft.notifyRaftStateListeners();
         };
 
-        sendConfigurationRequest((nextMember) ->
+        final Consumer<RemoteAddress> joinRequestConfigurator = (nextMember) ->
         {
             LOG.debug("Send join configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft);
+        };
 
-        }, onJoined, onJoined);
+        sendConfigurationRequest(joinRequestConfigurator, onJoined, onJoined);
     }
 
     public void leave()
@@ -95,11 +95,6 @@ public class RaftJoinedService implements Service<Void>
             whenLeaveCompleted.completeExceptionally(new UnsupportedOperationException("Leave not yet implemented for leader"));
             return;
         }
-
-        final Runnable onLeaveSingleNodeCluster = () ->
-        {
-            whenLeaveCompleted.completeExceptionally(new UnsupportedOperationException("Signle node can't leave cluster"));
-        };
 
         final Runnable onLeaveCluster = () ->
         {
@@ -112,7 +107,7 @@ public class RaftJoinedService implements Service<Void>
             LOG.debug("Send leave configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft).setLeave();
 
-        }, onLeaveSingleNodeCluster, onLeaveCluster);
+        }, onLeaveCluster, onLeaveCluster);
     }
 
     private void sendConfigurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
@@ -171,6 +166,7 @@ public class RaftJoinedService implements Service<Void>
         }
         else
         {
+            LOG.debug("Joined single node cluster", raft);
             onSingleNodeConfigurationCallback.run();
         }
     }
