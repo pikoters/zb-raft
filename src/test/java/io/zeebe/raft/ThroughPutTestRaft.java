@@ -117,10 +117,9 @@ public class ThroughPutTestRaft implements RaftStateListener
         persistentStorage = new InMemoryRaftPersistentStorage(logStream);
         final OneToOneRingBufferChannel messageBuffer = new OneToOneRingBufferChannel(new UnsafeBuffer(new byte[(MemberReplicateLogController.REMOTE_BUFFER_SIZE) + RingBufferDescriptor.TRAILER_LENGTH]));
 
-        raft = new Raft(serviceContainer,
+        raft = new Raft(logStream.getLogName(),
             configuration,
             socketAddress,
-            logStream,
             clientTransport,
             persistentStorage,
             messageBuffer,
