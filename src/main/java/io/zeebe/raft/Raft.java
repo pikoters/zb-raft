@@ -159,7 +159,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 else
                 {
                     LOG.error("Could not transition to follower state ", t);
-                    // TODO: now what!?
+                    becomeFollower();
                 }
             });
 
@@ -192,7 +192,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 else
                 {
                     LOG.error("Could not transition to candidate state ", t);
-                    // TODO: now what!?
+                    becomeFollower();
                 }
             });
 
@@ -248,7 +248,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 else
                 {
                     LOG.error("Could not transition to leader state ", t);
-                    // TODO: now what!?
+                    becomeFollower();
                 }
             });
 
@@ -521,14 +521,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public int requiredQuorum()
     {
         return Math.floorDiv(raftMembers.getMemberSize() + 1, 2) + 1;
-    }
-
-    /**
-     * @return true if the log storage appender is currently appendEvent, false otherwise
-     */
-    public boolean isLogStorageAppenderOpen()
-    {
-        return logStream.getLogStorageAppender() != null;
     }
 
     /**

@@ -78,10 +78,7 @@ public class FollowerState extends ElectionState
 
                 // if there are no more append requests immediately available,
                 // flush now and send the ack immediately
-//                if (!messageBuffer.hasAvailable())
-//                {
-                    appender.flushAndAck();
-//                }
+                appender.flushAndAck();
             }
             else
             {
