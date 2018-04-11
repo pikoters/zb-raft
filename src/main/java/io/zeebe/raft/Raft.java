@@ -20,6 +20,7 @@ import static io.zeebe.raft.RaftServiceNames.*;
 import java.time.Duration;
 import java.util.*;
 
+import io.zeebe.logstreams.impl.service.LogStreamServiceNames;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.msgpack.value.ValueArray;
 import io.zeebe.raft.controller.*;
@@ -50,6 +51,8 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     private static final boolean IS_TRACE_ENABLED = LOG.isTraceEnabled();
 
+    private final Injector<LogStream> logStreamInjector = new Injector<>();
+
     // environment
     private final ConcurrentQueueChannel<IncomingRaftRequest> requestQueue = new ConcurrentQueueChannel<>(new ManyToOneConcurrentLinkedQueue<>());
     private final OneToOneRingBufferChannel messageReceiveBuffer;
@@ -61,7 +64,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private RaftState state;
 
     // persistent state
-    private final LogStream logStream;
+    private LogStream logStream;
     private final RaftPersistentStorage persistentStorage;
 
     // volatile state
@@ -78,18 +81,15 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private String actorName;
     private String raftName;
 
-    public Raft(final ServiceContainer serviceContainer,
-            final RaftConfiguration configuration,
-            final SocketAddress socketAddress,
-            final LogStream logStream,
-            final ClientTransport clientTransport,
-            final RaftPersistentStorage persistentStorage,
-            final OneToOneRingBufferChannel messageReceiveBuffer,
-            final RaftStateListener... listeners)
+    public Raft(final RaftConfiguration configuration,
+        final SocketAddress socketAddress,
+        final ClientTransport clientTransport,
+        final RaftPersistentStorage persistentStorage,
+        final OneToOneRingBufferChannel messageReceiveBuffer,
+        final RaftStateListener... listeners)
     {
         this.configuration = configuration;
         this.socketAddress = socketAddress;
-        this.logStream = logStream;
         this.clientTransport = clientTransport;
         this.persistentStorage = persistentStorage;
         this.messageReceiveBuffer = messageReceiveBuffer;
@@ -107,6 +107,8 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     @Override
     public void start(ServiceStartContext startContext)
     {
+        this.logStream = logStreamInjector.getValue();
+
         this.serviceContext = startContext;
 
         final RaftJoinService raftJoinedService = new RaftJoinService(this, actor);
@@ -213,16 +215,18 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
             final CompositeServiceBuilder installOperation = serviceContext.createComposite(installOperationServiceName);
 
+            installOperation.createService(openLogStreamServiceName, new LeaderOpenLogStreamAppenderService(logStream))
+                .install();
+
             final LeaderState leaderState = new LeaderState(this, actor);
             installOperation.createService(leaderServiceName, leaderState)
+                .dependency(LogStreamServiceNames.logWriteBufferServiceName(logStream.getLogName()))
+                .dependency(openLogStreamServiceName)
                 .dependency(joinServiceName(raftName))
-                .install();
-            installOperation.createService(openLogStreamServiceName, new LeaderOpenLogStreamAppenderService(logStream))
                 .install();
 
             final LeaderCommitInitialEvent leaderCommitInitialEventService = new LeaderCommitInitialEvent(this, actor, leaderState);
             installOperation.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
-                .dependency(openLogStreamServiceName)
                 .dependency(leaderServiceName)
                 .install();
 
@@ -520,7 +524,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public int requiredQuorum()
     {
-        return Math.floorDiv(raftMembers.getMemberSize() + 1, 2) + 1;
+        return RaftMath.getRequiredQuorum(getMemberSize() + 1);
     }
 
     /**
@@ -651,5 +655,10 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public Heartbeat getHeartbeat()
     {
         return heartbeat;
+    }
+
+    public Injector<LogStream> getLogStreamInjector()
+    {
+        return logStreamInjector;
     }
 }
