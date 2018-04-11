@@ -78,10 +78,11 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
     private ServiceStartContext serviceContext;
 
-    private String actorName;
     private String raftName;
 
-    public Raft(final RaftConfiguration configuration,
+    public Raft(
+        final String raftName,
+        final RaftConfiguration configuration,
         final SocketAddress socketAddress,
         final ClientTransport clientTransport,
         final RaftPersistentStorage persistentStorage,
@@ -93,8 +94,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         this.clientTransport = clientTransport;
         this.persistentStorage = persistentStorage;
         this.messageReceiveBuffer = messageReceiveBuffer;
-        this.actorName = String.format("%s.%s", logStream.getLogName(), socketAddress.toString());
-        this.raftName = logStream.getLogName();
+        this.raftName = raftName;
 
         this.heartbeat = new Heartbeat(configuration.getElectionIntervalMs());
         this.raftMembers = new RaftMembers(socketAddress, persistentStorage, clientTransport::registerRemoteAddress);
@@ -649,7 +649,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     @Override
     public String getName()
     {
-        return actorName;
+        return raftName;
     }
 
     public Heartbeat getHeartbeat()

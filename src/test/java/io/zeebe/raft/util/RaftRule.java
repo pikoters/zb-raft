@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 
 import io.zeebe.dispatcher.*;
 import io.zeebe.logstreams.LogStreams;
+import io.zeebe.logstreams.impl.service.LogStreamServiceNames;
 import io.zeebe.logstreams.log.*;
 import io.zeebe.protocol.clientapi.EventType;
 import io.zeebe.protocol.impl.BrokerEventMetadata;
@@ -116,6 +117,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
     protected void before() throws Throwable
     {
         final String name = socketAddress.toString();
+        final String logName = String.format("%s-%d-%d", topicName, partition, socketAddress.port());
 
         final RaftApiMessageHandler raftApiMessageHandler = new RaftApiMessageHandler();
 
@@ -149,7 +151,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         logStream =
             LogStreams.createFsLogStream(wrapString(topicName), partition)
-                      .logName(String.format("%s-%d-%d", topicName, partition, socketAddress.port()))
+                      .logName(logName)
                       .deleteOnClose(true)
                       .logDirectory(Files.createTempDirectory("raft-test-" + socketAddress.port() + "-").toString())
                       .serviceContainer(serviceContainer)
@@ -182,7 +184,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
             }
         }).when(spyClientOutput).sendMessage(any(TransportMessage.class));
 
-        raft = new Raft(serviceContainer, configuration, socketAddress, logStream, spyClientTransport, persistentStorage, messageBuffer, this)
+        raft = new Raft(logName, configuration, socketAddress, spyClientTransport, persistentStorage, messageBuffer, this)
         {
             @Override
             protected void onActorStarting()
@@ -199,6 +201,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
 
         raftServiceName = raftServiceName(name);
         serviceContainer.createService(raftServiceName, raft)
+            .dependency(LogStreamServiceNames.logStreamServiceName(logName), raft.getLogStreamInjector())
             .install()
             .join();
     }
