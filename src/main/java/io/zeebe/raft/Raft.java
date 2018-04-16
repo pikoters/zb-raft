@@ -228,7 +228,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
             final LeaderCommitInitialEvent leaderCommitInitialEventService = new LeaderCommitInitialEvent(this, actor, leaderState);
             installOperation.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
-                .dependency(leaderServiceName)
+                .dependency(leaderServiceName, leaderCommitInitialEventService.getLeaderStateInjector())
                 .install();
 
             for (RaftMember raftMember : raftMembers.getMemberList())

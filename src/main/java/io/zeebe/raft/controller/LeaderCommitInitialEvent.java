@@ -22,6 +22,7 @@ import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
 import io.zeebe.raft.state.LeaderState;
+import io.zeebe.raft.state.RaftState;
 import io.zeebe.servicecontainer.*;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
@@ -33,7 +34,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     public static final Duration COMMIT_TIMEOUT = Duration.ofMinutes(15);
 
-    private final Injector<LeaderState> leaderStateInjector = new Injector<>();
+    private final Injector<RaftState> leaderStateInjector = new Injector<>();
 
     private final LeaderState leaderState;
     private final ActorControl actor;
@@ -124,7 +125,7 @@ public class LeaderCommitInitialEvent implements Service<Void>
     }
 
 
-    public Injector<LeaderState> getLeaderStateInjector()
+    public Injector<RaftState> getLeaderStateInjector()
     {
         return leaderStateInjector;
     }
