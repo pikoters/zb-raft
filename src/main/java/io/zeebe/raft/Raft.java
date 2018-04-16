@@ -108,6 +108,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public void start(ServiceStartContext startContext)
     {
         this.logStream = logStreamInjector.getValue();
+        this.logStream.setTerm(getTerm());
 
         this.serviceContext = startContext;
 
@@ -373,6 +374,8 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 .setTerm(term)
                 .setVotedFor(null)
                 .save();
+
+            logStream.setTerm(term);
         }
         else if (currentTerm > term)
         {
