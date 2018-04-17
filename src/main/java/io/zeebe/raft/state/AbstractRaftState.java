@@ -93,6 +93,7 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
         requestQueueSubscription.cancel();
         messageBufferSubscription.cancel();
         reader.close();
+        appender.close();
     }
 
     private void consumeRequest()
