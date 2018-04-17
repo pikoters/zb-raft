@@ -167,12 +167,22 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
     public void becomeCandidate()
     {
+        final int previousTerm = getTerm();
         actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
         {
-            setTerm(getTerm() + 1);
+            final int currentTerm = getTerm();
+
+            if (previousTerm != currentTerm)
+            {
+                LOG.warn("Expected term {} but is {}, ignoring callback", previousTerm, currentTerm);
+                return;
+            }
+
+            final int nextTerm = currentTerm + 1;
+            setTerm(nextTerm);
             setVotedFor(getSocketAddress());
 
-            final ServiceName<RaftState> candidateServiceName = candidateServiceName(raftName, getTerm());
+            final ServiceName<RaftState> candidateServiceName = candidateServiceName(raftName, nextTerm);
             final CandidateState candidateState = new CandidateState(this, actor);
 
             final ActorFuture<RaftState> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
@@ -183,7 +193,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             {
                 if (t2 == null)
                 {
-                    LOG.debug("Raft became candidate in term {}", getTerm());
+                    LOG.debug("Raft became candidate in term {}", nextTerm);
                     this.state = RaftState.CANDIDATE;
                     notifyRaftStateListeners();
                 }
