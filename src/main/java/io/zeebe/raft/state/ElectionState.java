@@ -39,24 +39,35 @@ public abstract class ElectionState extends AbstractRaftState
         }
         else
         {
-            scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
+            scheduleElectionTimer();
         }
     }
 
     @Override
     protected void onLeaveState()
     {
-        scheduledElection.cancel();
+        if (scheduledElection != null)
+        {
+            scheduledElection.cancel();
+        }
+
         super.onLeaveState();
+    }
+
+    protected void scheduleElectionTimer()
+    {
+        scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
     }
 
     private void electionTimeoutCallback()
     {
-        scheduledElection = raftActor.runDelayed(heartbeat.nextElectionTimeout(), this::electionTimeoutCallback);
-
         if (heartbeat.shouldElect())
         {
             onElectionTimeout();
+        }
+        else
+        {
+            scheduleElectionTimer();
         }
     }
 

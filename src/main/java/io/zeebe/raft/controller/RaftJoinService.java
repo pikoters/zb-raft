@@ -79,6 +79,7 @@ public class RaftJoinService implements Service<Void>
     {
         final Runnable onJoined = () ->
         {
+            LOG.info("Joined raft in term {}", raft.getTerm());
             whenJoinCompleted.complete(null);
         };
 
@@ -88,7 +89,7 @@ public class RaftJoinService implements Service<Void>
             configurationRequest.reset().setRaft(raft);
         };
 
-        sendConfigurationRequest(joinRequestConfigurator, onJoined, onJoined);
+        sendConfigurationRequest(joinRequestConfigurator, onJoined);
     }
 
     public void leave()
@@ -110,7 +111,7 @@ public class RaftJoinService implements Service<Void>
             LOG.debug("Send leave configuration request to {}", nextMember);
             configurationRequest.reset().setRaft(raft).setLeave();
 
-        }, onLeaveCluster, onLeaveCluster);
+        }, onLeaveCluster);
 
         actor.runDelayed(Duration.ofMillis(leaveTimeoutMs), () ->
         {
@@ -120,7 +121,7 @@ public class RaftJoinService implements Service<Void>
         });
     }
 
-    private void sendConfigurationRequest(Consumer<RemoteAddress> configureRequest, Runnable onSingleNodeConfigurationCallback, Runnable configurationAcceptedCallback)
+    private void sendConfigurationRequest(Consumer<RemoteAddress> configureRequest, Runnable configurationAcceptedCallback)
     {
         final RemoteAddress nextMember = getNextMember();
 
@@ -157,27 +158,27 @@ public class RaftJoinService implements Service<Void>
                         else
                         {
                             LOG.debug("Configuration was not accepted!");
-                            actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                            actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, configurationAcceptedCallback));
                         }
                     }
                     else
                     {
                         LOG.debug("Configuration response with different term.");
                         // received response from different term
-                        actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                        actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, configurationAcceptedCallback));
                     }
                 }
                 else
                 {
                     LOG.debug("Failed to send configuration request to {}", nextMember);
-                    actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, onSingleNodeConfigurationCallback, configurationAcceptedCallback));
+                    actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, configurationAcceptedCallback));
                 }
             }));
         }
         else
         {
-            LOG.debug("Joined single node cluster", raft);
-            onSingleNodeConfigurationCallback.run();
+            LOG.debug("Ignoring configuration request in single node cluster in term {}", raft.getTerm());
+            configurationAcceptedCallback.run();
         }
     }
 

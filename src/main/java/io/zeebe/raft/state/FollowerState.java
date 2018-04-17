@@ -29,7 +29,13 @@ public class FollowerState extends ElectionState
     public FollowerState(Raft raft, ActorControl raftActor)
     {
         super(raft, raftActor);
-        pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler());
+        pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler() {
+            @Override
+            public void consensusFailed(Raft raft)
+            {
+                scheduleElectionTimer();
+            }
+        });
     }
 
     @Override

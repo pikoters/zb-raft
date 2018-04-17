@@ -159,6 +159,10 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     this.state = RaftState.FOLLOWER;
                     notifyRaftStateListeners();
                 }
+                else
+                {
+                    LOG.error("Failed to become follower", t2);
+                }
             });
 
             currentStateServiceName = followerServiceName;
@@ -196,6 +200,10 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     LOG.debug("Raft became candidate in term {}", nextTerm);
                     this.state = RaftState.CANDIDATE;
                     notifyRaftStateListeners();
+                }
+                else
+                {
+                    LOG.error("Failed to become candidate", t2);
                 }
             });
 
@@ -244,11 +252,15 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
             actor.runOnCompletion(whenLeader, (v2, t2) ->
             {
-                if (t == null)
+                if (t2 == null)
                 {
                     LOG.debug("Raft became leader in term {}", getTerm());
                     this.state = RaftState.LEADER;
                     notifyRaftStateListeners();
+                }
+                else
+                {
+                    LOG.error("Failed to become leader", t2);
                 }
             });
 
