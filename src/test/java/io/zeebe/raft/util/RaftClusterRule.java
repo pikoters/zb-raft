@@ -154,11 +154,6 @@ public class RaftClusterRule implements TestRule
         awaitCondition(() -> raft.getState() == state, "Failed to wait for %s to become %s", raft, state);
     }
 
-    public void awaitLogControllerOpen(final RaftRule raft)
-    {
-        awaitCondition(() -> raft.getLogStream().getLogStorageAppender() != null, "Failed to wait for %s to appendEvent log stream controller", raft);
-    }
-
     public void awaitEventCommitted(final RaftRule raftToWait, final long position, final int term, final String message)
     {
         awaitCondition(() -> raftToWait.eventCommitted(position, term, message), COMMITTED_RETRIES,

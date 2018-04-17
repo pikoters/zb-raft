@@ -88,7 +88,6 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
         messageBufferSubscription = raftActor.consume(messageBuffer, this::consumeMessage);
     }
 
-
     protected void onLeaveState()
     {
         requestQueueSubscription.cancel();

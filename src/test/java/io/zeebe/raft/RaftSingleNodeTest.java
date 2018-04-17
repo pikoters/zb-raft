@@ -56,7 +56,6 @@ public class RaftSingleNodeTest
     {
         // given
         final RaftRule leader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(leader);
 
         // when
         final long position = leader.writeEvents("foo", "bar", "end");

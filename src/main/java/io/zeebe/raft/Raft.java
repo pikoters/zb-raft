@@ -159,11 +159,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     this.state = RaftState.FOLLOWER;
                     notifyRaftStateListeners();
                 }
-                else
-                {
-                    LOG.error("Could not transition to follower state ", t);
-                    becomeFollower();
-                }
             });
 
             currentStateServiceName = followerServiceName;
@@ -180,7 +175,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             final ServiceName<RaftState> candidateServiceName = candidateServiceName(raftName, getTerm());
             final CandidateState candidateState = new CandidateState(this, actor);
 
-            final ActorFuture<Void> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
+            final ActorFuture<RaftState> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
                 .dependency(joinServiceName(raftName))
                 .install();
 
@@ -191,11 +186,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     LOG.debug("Raft became candidate in term {}", getTerm());
                     this.state = RaftState.CANDIDATE;
                     notifyRaftStateListeners();
-                }
-                else
-                {
-                    LOG.error("Could not transition to candidate state ", t);
-                    becomeFollower();
                 }
             });
 
@@ -249,11 +239,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     LOG.debug("Raft became leader in term {}", getTerm());
                     this.state = RaftState.LEADER;
                     notifyRaftStateListeners();
-                }
-                else
-                {
-                    LOG.error("Could not transition to leader state ", t);
-                    becomeFollower();
                 }
             });
 

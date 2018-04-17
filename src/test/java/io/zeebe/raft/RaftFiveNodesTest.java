@@ -123,7 +123,6 @@ public class RaftFiveNodesTest
     {
         // given
         final RaftRule leader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(leader);
 
         // when
         final long position = leader.writeEvents("foo", "bar", "end");
@@ -150,7 +149,6 @@ public class RaftFiveNodesTest
             .isNotEqualTo(raft1);
 
         // when
-        cluster.awaitLogControllerOpen(newLeader);
         final long position = newLeader.writeEvents("foo", "bar", "end");
 
         // then
@@ -163,7 +161,6 @@ public class RaftFiveNodesTest
     {
         // given
         final RaftRule oldLeader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(oldLeader);
 
         long position = oldLeader.writeEvents("foo", "bar");
         cluster.awaitEventCommittedOnAll(position, oldLeader.getTerm(), "bar");
@@ -173,7 +170,6 @@ public class RaftFiveNodesTest
 
         // and a new leader writes more events
         final RaftRule newLeader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(newLeader);
 
         position = newLeader.writeEvents("hello", "world");
         cluster.awaitEventCommittedOnAll(position, newLeader.getTerm(), "world");
@@ -191,7 +187,6 @@ public class RaftFiveNodesTest
     {
         // given a log with two events committed
         final RaftRule oldLeader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(oldLeader);
         cluster.awaitRaftEventCommittedOnAll(oldLeader.getTerm());
 
         long position = oldLeader.writeEvents("foo", "bar");
@@ -214,7 +209,6 @@ public class RaftFiveNodesTest
 
         // and a new leader writes more events
         final RaftRule newLeader = cluster.awaitLeader();
-        cluster.awaitLogControllerOpen(newLeader);
 
         position = newLeader.writeEvents("oh", "boy");
         cluster.awaitEventCommittedOnAll(position, newLeader.getTerm(), "boy");

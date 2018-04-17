@@ -140,13 +140,13 @@ public class LeaderState extends AbstractRaftState
         {
             if (raft.leaveMember(socketAddress))
             {
-                configurationChangeController.appendEvent(serverOutput, remoteAddress, requestId);
-
                 // re-add append condition
                 if (raftMembers.getMemberSize() == 0)
                 {
                     createOnAppendContition();
                 }
+
+                configurationChangeController.appendEvent(serverOutput, remoteAddress, requestId);
             }
         }
     }
