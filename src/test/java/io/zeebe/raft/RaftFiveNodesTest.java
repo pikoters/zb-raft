@@ -52,7 +52,7 @@ public class RaftFiveNodesTest
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
 
         final List<RaftState> raftStateChanges = leader.getRaftStateChanges();
-        assertThat(raftStateChanges).containsSequence(RaftState.CANDIDATE, RaftState.LEADER);
+        assertThat(raftStateChanges).contains(RaftState.LEADER);
     }
 
     @Test
