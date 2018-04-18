@@ -16,7 +16,6 @@
 package io.zeebe.raft.protocol;
 
 import static io.zeebe.test.util.BufferWriterUtil.writeAndRead;
-import static io.zeebe.test.util.TestUtil.waitUntil;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.zeebe.dispatcher.impl.log.DataFrameDescriptor;
@@ -30,7 +29,9 @@ import io.zeebe.util.sched.testing.ActorSchedulerRule;
 import org.agrona.BitUtil;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.*;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Test;
 
 public class RaftProtocolMessageTest
 {
@@ -53,7 +54,7 @@ public class RaftProtocolMessageTest
         logStream = raft2.getLogStream();
 
         // wait for raft 2 to join raft group in term 1 as follower
-        waitUntil(() -> raft.getTerm() == 1);
+        cluster.awaitAllJoined();
 
         // freeze state by not calling doWork() on raft nodes anymore
         cluster.removeRafts(raft1, raft2);
