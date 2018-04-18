@@ -39,6 +39,25 @@ public class Transition
         return term;
     }
 
+    public boolean isValid(final RaftState state, final int currentTerm)
+    {
+        if (currentTerm > term)
+        {
+            return false;
+        }
+
+        switch (raftTranisiton)
+        {
+            case TO_CANDIDATE:
+                return state == RaftState.FOLLOWER;
+            case TO_LEADER:
+                return state == RaftState.CANDIDATE;
+            case TO_FOLLOWER:
+            default:
+                return true;
+        }
+    }
+
     @Override
     public boolean equals(Object o)
     {

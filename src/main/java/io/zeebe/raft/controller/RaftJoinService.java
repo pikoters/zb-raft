@@ -157,7 +157,7 @@ public class RaftJoinService implements Service<Void>
                         }
                         else
                         {
-                            LOG.debug("Configuration was not accepted!");
+                            LOG.debug("Configuration request was rejected in term {}", configurationResponse.getTerm());
                             actor.runDelayed(DEFAULT_RETRY, () -> sendConfigurationRequest(configureRequest, configurationAcceptedCallback));
                         }
                     }

@@ -21,7 +21,7 @@ import io.zeebe.raft.protocol.VoteResponse;
 import io.zeebe.util.buffer.BufferWriter;
 import org.agrona.DirectBuffer;
 
-public abstract class VoteRequestHandler implements ConsensusRequestHandler
+public class VoteRequestHandler implements ConsensusRequestHandler
 {
     private final VoteRequest voteRequest = new VoteRequest();
     private final VoteResponse voteResponse = new VoteResponse();
@@ -47,6 +47,18 @@ public abstract class VoteRequestHandler implements ConsensusRequestHandler
         voteResponse.wrap(responseBuffer, 0, responseBuffer.capacity());
 
         return voteResponse.isGranted();
+    }
+
+    @Override
+    public void consensusGranted(final Raft raft)
+    {
+        raft.becomeLeader(raft.getTerm());
+    }
+
+    @Override
+    public void consensusFailed(final Raft raft)
+    {
+        raft.becomeFollower(raft.getTerm());
     }
 
     @Override

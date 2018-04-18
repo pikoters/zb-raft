@@ -21,7 +21,7 @@ import io.zeebe.raft.protocol.PollResponse;
 import io.zeebe.util.buffer.BufferWriter;
 import org.agrona.DirectBuffer;
 
-public abstract class PollRequestHandler implements ConsensusRequestHandler
+public class PollRequestHandler implements ConsensusRequestHandler
 {
     private final PollRequest pollRequest = new PollRequest();
     private final PollResponse pollResponse = new PollResponse();
@@ -50,6 +50,18 @@ public abstract class PollRequestHandler implements ConsensusRequestHandler
         return !raft.mayStepDown(pollResponse) &&
             raft.isTermCurrent(pollResponse) &&
             pollResponse.isGranted();
+    }
+
+    @Override
+    public void consensusGranted(final Raft raft)
+    {
+        raft.becomeCandidate(raft.getTerm() + 1);
+    }
+
+    @Override
+    public void consensusFailed(final Raft raft)
+    {
+
     }
 
     @Override

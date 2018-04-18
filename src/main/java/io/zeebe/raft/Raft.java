@@ -44,6 +44,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.BiConsumer;
 
 import static io.zeebe.raft.RaftServiceNames.*;
 import static io.zeebe.raft.state.RaftTranisiton.*;
@@ -68,7 +69,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private ServiceName<?> currentStateServiceName;
 
     // State Machine
-    private Transition transition;
+    private Transition currentTransition;
     private Transition nextTransition;
 
     // persistent state
@@ -143,23 +144,146 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
     // state transitions
 
-    public void becomeFollower(int term)
+    public void becomeFollower(final int term)
     {
-        final Transition newTransition = new Transition(TO_FOLLOWER, term);
-        if (transition != null)
+        final Transition transition = new Transition(TO_FOLLOWER, term);
+
+        if (shouldTakeTransition(transition))
         {
-            if (transition.equals(newTransition))
-            {
-                return;
-            }
-            this.nextTransition = newTransition;
-            LOG.debug("Setting next transition {} ", this.nextTransition);
-            return;
+            leaveState(this::transitionToFollower);
+        }
+    }
+
+    public void becomeCandidate(final int term)
+    {
+        final Transition transition = new Transition(TO_CANDIDATE, term);
+
+        if (shouldTakeTransition(transition))
+        {
+            leaveState(this::transitionToCandidate);
+        }
+    }
+
+    public void becomeLeader(final int term)
+    {
+        final Transition transition = new Transition(TO_LEADER, term);
+
+        if (shouldTakeTransition(transition))
+        {
+            leaveState(this::transitionToLeader);
+        }
+    }
+
+    private void transitionToFollower(final Void value, final Throwable throwable)
+    {
+        final int term = currentTransition.getTerm();
+
+        state = null;
+
+        setTerm(term);
+
+        final ServiceName<AbstractRaftState> followerServiceName = followerServiceName(raftName, term);
+        final FollowerState followerState = new FollowerState(this, actor);
+
+        final ActorFuture<AbstractRaftState> installFuture = serviceContext.createService(followerServiceName, followerState).install();
+
+        actor.runOnCompletion(installFuture, this::onStateTransitionCompleted);
+
+        currentStateServiceName = followerServiceName;
+    }
+
+    private void transitionToCandidate(final Void value, final Throwable throwable)
+    {
+        final int term = currentTransition.getTerm();
+
+        state = null;
+
+        setTerm(term);
+        setVotedFor(getSocketAddress());
+
+        final ServiceName<AbstractRaftState> candidateServiceName = candidateServiceName(raftName, term);
+        final CandidateState candidateState = new CandidateState(this, actor);
+
+        final ActorFuture<AbstractRaftState> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
+                                                                           .dependency(joinServiceName(raftName))
+                                                                           .install();
+
+        actor.runOnCompletion(whenCandicate, this::onStateTransitionCompleted);
+
+        currentStateServiceName = candidateServiceName;
+    }
+
+    private void transitionToLeader(final Void value, final Throwable throwable)
+    {
+        final int term = currentTransition.getTerm();
+
+        state = null;
+
+        final ServiceName<Void> installOperationServiceName = leaderInstallServiceName(raftName, term);
+        final ServiceName<AbstractRaftState> leaderServiceName = leaderServiceName(raftName, term);
+        final ServiceName<Void> initialEventCommittedServiceName = leaderInitialEventCommittedServiceName(raftName, term);
+        final ServiceName<Void> openLogStreamServiceName = leaderOpenLogStreamServiceName(raftName, term);
+
+        final CompositeServiceBuilder installOperation = serviceContext.createComposite(installOperationServiceName);
+
+        installOperation.createService(openLogStreamServiceName, new LeaderOpenLogStreamAppenderService(logStream))
+                        .install();
+
+        final LeaderState leaderState = new LeaderState(this, actor);
+        installOperation.createService(leaderServiceName, leaderState)
+                        .dependency(LogStreamServiceNames.logWriteBufferServiceName(logStream.getLogName()))
+                        .dependency(openLogStreamServiceName)
+                        .dependency(joinServiceName(raftName))
+                        .install();
+
+        final LeaderCommitInitialEvent leaderCommitInitialEventService = new LeaderCommitInitialEvent(this, actor, leaderState);
+        serviceContext.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
+                      .dependency(leaderServiceName)
+                      .install();
+
+        for (final RaftMember raftMember : raftMembers.getMemberList())
+        {
+            final ServiceName<Void> replicateLogControllerServiceName = replicateLogConrollerServiceName(raftName, term, raftMember.getRemoteAddress().getAddress());
+            final MemberReplicateLogController replicationController = new MemberReplicateLogController(this, raftMember, clientTransport);
+            installOperation.createService(replicateLogControllerServiceName, replicationController)
+                            .dependency(leaderServiceName)
+                            .install();
         }
 
-        transition = newTransition;
-        LOG.debug("Taking transition {} from {} ", transition, getState());
 
+        final ActorFuture<Void> whenLeader = installOperation.install();
+
+        actor.runOnCompletion(whenLeader, ((v, t) -> onStateTransitionCompleted(leaderState, throwable)));
+
+        currentStateServiceName = installOperationServiceName;
+    }
+
+    private boolean shouldTakeTransition(final Transition transition)
+    {
+        if (currentTransition != null)
+        {
+            if (!currentTransition.equals(transition))
+            {
+                nextTransition = transition;
+                LOG.debug("Setting next transition {} during transition {} from state {}", nextTransition, currentTransition, getState());
+            }
+            return false;
+        }
+        else if (!transition.isValid(getState(), getTerm()))
+        {
+            LOG.warn("Ignoring invalid transition {} in state {} and term {}", transition, getState(), getTerm());
+            return false;
+        }
+        else
+        {
+            currentTransition = transition;
+            LOG.debug("Taking transition {} from state {}", transition, getState());
+            return true;
+        }
+    }
+
+    private void leaveState(final BiConsumer<Void, Throwable> whenLeftCallback)
+    {
         final ActorFuture<Void> whenPrevStateLeft;
         if (currentStateServiceName != null)
         {
@@ -170,43 +294,48 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
             whenPrevStateLeft = CompletableActorFuture.completed(null);
         }
 
-        actor.runOnCompletion(whenPrevStateLeft, (v, t) ->
-        {
-            state = null;
-            setTerm(term);
-            final ServiceName<AbstractRaftState> followerServiceName = followerServiceName(raftName, term);
-            final FollowerState followerState = new FollowerState(this, actor);
-
-            actor.runOnCompletion(serviceContext.createService(followerServiceName, followerState).install(), this::onBecomeFollower);
-
-            currentStateServiceName = followerServiceName;
-        });
+        actor.runOnCompletion(whenPrevStateLeft, whenLeftCallback);
     }
 
-    private void onBecomeFollower(AbstractRaftState abstractRaftState, Throwable throwable)
+    private void onStateTransitionCompleted(final AbstractRaftState state, final Throwable throwable)
     {
-        transition = null;
+        final Transition lastTransititon = currentTransition;
+        currentTransition = null;
 
         if (throwable == null)
         {
-            this.state = abstractRaftState;
+            this.state = state;
 
-            LOG.debug("Raft became follower in term {}", getTerm());
+            LOG.debug("Transitioned to state {} in term {}", getState(), getTerm());
 
-            final Transition transitionToTake = nextTransition;
-            nextTransition = null;
-            if (transitionToTake != null && transitionToTake.getTerm() >= getTerm())
+            if (nextTransition != null)
             {
-                switch (transitionToTake.getRaftTranisiton())
-                {
-                    case TO_CANDIDATE:
-                        becomeCandidate(transitionToTake.getTerm());
-                        break;
+                final Transition transition = nextTransition;
+                nextTransition = null;
 
-                    default:
-                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
-                        notifyRaftStateListeners();
-                        break;
+                if (transition.isValid(getState(), getTerm()))
+                {
+                    switch (transition.getRaftTranisiton())
+                    {
+                        case TO_FOLLOWER:
+                            becomeFollower(transition.getTerm());
+                            break;
+                        case TO_CANDIDATE:
+                            becomeCandidate(transition.getTerm());
+                            break;
+                        case TO_LEADER:
+                            becomeLeader(transition.getTerm());
+                            break;
+                        default:
+                            LOG.warn("Ignoring unknown transition {} in state {} and term {}", transition, getState(), getTerm());
+                            notifyRaftStateListeners();
+                            break;
+                    }
+                }
+                else
+                {
+                    LOG.debug("Ignoring invalid next transition {} in state {} and term {}", transition, getState(), getTerm());
+                    notifyRaftStateListeners();
                 }
             }
             else
@@ -216,206 +345,12 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         }
         else
         {
-            LOG.error("Failed to become follower", throwable);
-        }
-    }
-
-    public void becomeCandidate(int term)
-    {
-        final Transition newTransition = new Transition(TO_CANDIDATE, term);
-        if (transition != null)
-        {
-            if (transition.equals(newTransition))
-            {
-                return;
-            }
-            this.nextTransition = newTransition;
-            LOG.debug("Setting next transition {} ", this.nextTransition);
-            return;
+            LOG.error("Failed to execute transition {}, raft is now in an undefined state", lastTransititon);
         }
 
-        if (getState() == RaftState.LEADER)
-        {
-            LOG.debug("Got invalid transition {} in state {}, ignoring", TO_CANDIDATE, state);
-            return;
-        }
-
-        transition = newTransition;
-        LOG.debug("Taking transition {} from {} ", transition, getState());
-
-
-        actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
-        {
-            state = null;
-            setTerm(term);
-            setVotedFor(getSocketAddress());
-
-            final ServiceName<AbstractRaftState> candidateServiceName = candidateServiceName(raftName, term);
-            final CandidateState candidateState = new CandidateState(this, actor);
-
-            final ActorFuture<AbstractRaftState> whenCandicate = serviceContext.createService(candidateServiceName, candidateState)
-                .dependency(joinServiceName(raftName))
-                .install();
-
-            actor.runOnCompletion(whenCandicate, this::onBecomeCandiate);
-
-            currentStateServiceName = candidateServiceName;
-        });
-    }
-
-    private void onBecomeCandiate(AbstractRaftState abstractRaftState, Throwable throwable)
-    {
-        transition = null;
-
-        if (throwable == null)
-        {
-            this.state = abstractRaftState;
-            LOG.debug("Raft became candidate in term {}", getTerm());
-
-            final Transition transitionToTake = nextTransition;
-            nextTransition = null;
-            if (transitionToTake != null && transitionToTake.getTerm() >= getTerm())
-            {
-                switch (transitionToTake.getRaftTranisiton())
-                {
-                    case TO_FOLLOWER:
-                        becomeFollower(transitionToTake.getTerm());
-                        break;
-
-                    case TO_LEADER:
-                        becomeLeader(transitionToTake.getTerm());
-                        break;
-
-                    default:
-                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
-                        notifyRaftStateListeners();
-                        break;
-                }
-            }
-            else
-            {
-                notifyRaftStateListeners();
-            }
-        }
-        else
-        {
-            LOG.error("Failed to become candidate", throwable);
-        }
-    }
-
-    public void becomeLeader(int term)
-    {
-        final Transition newTransition = new Transition(TO_LEADER, term);
-        if (transition != null)
-        {
-            if (transition.equals(newTransition))
-            {
-                return;
-            }
-            this.nextTransition = newTransition;
-            LOG.debug("Setting next transition {} ", this.nextTransition);
-            return;
-        }
-
-        if (getState() == RaftState.FOLLOWER)
-        {
-            LOG.debug("Got invalid transition {} in state {}, ignoring", TO_LEADER, state);
-            return;
-        }
-
-        transition = newTransition;
-        LOG.debug("Taking transition {} from {} ", transition, getState());
-
-        actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
-        {
-            state = null;
-
-            final ServiceName<Void> installOperationServiceName = leaderInstallServiceName(raftName, term);
-            final ServiceName<AbstractRaftState> leaderServiceName = leaderServiceName(raftName, term);
-            final ServiceName<Void> initialEventCommittedServiceName = leaderInitialEventCommittedServiceName(raftName, term);
-            final ServiceName<Void> openLogStreamServiceName = leaderOpenLogStreamServiceName(raftName, term);
-
-            final CompositeServiceBuilder installOperation = serviceContext.createComposite(installOperationServiceName);
-
-            installOperation.createService(openLogStreamServiceName, new LeaderOpenLogStreamAppenderService(logStream))
-                .install();
-
-            final LeaderState leaderState = new LeaderState(this, actor);
-            installOperation.createService(leaderServiceName, leaderState)
-                .dependency(LogStreamServiceNames.logWriteBufferServiceName(logStream.getLogName()))
-                .dependency(openLogStreamServiceName)
-                .dependency(joinServiceName(raftName))
-                .install();
-
-            final LeaderCommitInitialEvent leaderCommitInitialEventService = new LeaderCommitInitialEvent(this, actor, leaderState);
-            serviceContext.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
-                .dependency(leaderServiceName)
-                .install();
-
-            for (RaftMember raftMember : raftMembers.getMemberList())
-            {
-                final ServiceName<Void> replicateLogControllerServiceName = replicateLogConrollerServiceName(raftName, term, raftMember.getRemoteAddress().getAddress());
-                final MemberReplicateLogController replicationController = new MemberReplicateLogController(this, raftMember, clientTransport);
-                installOperation.createService(replicateLogControllerServiceName, replicationController)
-                    .dependency(leaderServiceName)
-                    .install();
-            }
-
-            currentStateServiceName = installOperationServiceName;
-
-            final ActorFuture<Void> whenLeader = installOperation.install();
-
-            actor.runOnCompletion(whenLeader, ((aVoid, throwable) -> onBecomeLeader(leaderState, throwable)));
-        });
-    }
-
-    private void onBecomeLeader(AbstractRaftState abstractRaftState, Throwable throwable)
-    {
-        transition = null;
-
-        if (throwable == null)
-        {
-            this.state = abstractRaftState;
-            LOG.debug("Raft became leader in term {}", getTerm());
-
-            final Transition transitionToTake = nextTransition;
-            nextTransition = null;
-            if (transitionToTake != null && transitionToTake.getTerm() >= getTerm())
-            {
-                switch (transitionToTake.getRaftTranisiton())
-                {
-                    case TO_FOLLOWER:
-                        becomeFollower(transitionToTake.getTerm());
-                        break;
-
-                    default:
-                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
-                        notifyRaftStateListeners();
-                        break;
-                }
-            }
-            else
-            {
-                notifyRaftStateListeners();
-            }
-        }
-        else
-        {
-            LOG.error("Failed to become leader", throwable);
-        }
     }
 
     // listeners
-
-    public void registerRaftStateListener(final RaftStateListener listener)
-    {
-        actor.call(() -> raftStateListeners.add(listener));
-    }
-
-    public void removeRaftStateListener(final RaftStateListener listener)
-    {
-        actor.call(() -> raftStateListeners.remove(listener));
-    }
 
     public void notifyRaftStateListeners()
     {
@@ -483,11 +418,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     }
 
     // state
-
-    public AbstractRaftState getStateService()
-    {
-        return state;
-    }
 
     /**
      * @return the current {@link RaftState} of this raft node
@@ -627,7 +557,6 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
     /**
      *  Add raft to list of known members of this node and starts the {@link AppendRaftEventController} to write the new configuration to the log stream
-     * @return
      */
     public boolean joinMember(final SocketAddress socketAddress)
     {
@@ -683,6 +612,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
      */
     public boolean matchesLog(final HasPartition hasPartition)
     {
+        // TOOD(menski): why is this method not used anymore???
         return logStream.getPartitionId() == hasPartition.getPartitionId();
     }
 

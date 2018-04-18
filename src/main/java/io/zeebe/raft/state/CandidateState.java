@@ -28,20 +28,7 @@ public class CandidateState extends ElectionState
     public CandidateState(Raft raft, ActorControl raftActor)
     {
         super(raft, raftActor);
-        voteController = new ConsensusRequestController(raft, raftActor, new VoteRequestHandler()
-        {
-            @Override
-            public void consensusGranted(Raft raft)
-            {
-                raft.becomeLeader(raft.getTerm());
-            }
-
-            @Override
-            public void consensusFailed(Raft raft)
-            {
-                raft.becomeFollower(raft.getTerm());
-            }
-        });
+        voteController = new ConsensusRequestController(raft, raftActor, new VoteRequestHandler());
     }
 
     @Override

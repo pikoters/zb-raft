@@ -31,15 +31,11 @@ public class FollowerState extends ElectionState
         super(raft, raftActor);
         pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler()
         {
-            @Override
-            public void consensusGranted(Raft raft)
-            {
-                raft.becomeCandidate(raft.getTerm() + 1);
-            }
 
             @Override
-            public void consensusFailed(Raft raft)
+            public void consensusFailed(final Raft raft)
             {
+                super.consensusFailed(raft);
                 scheduleElectionTimer();
             }
         });
