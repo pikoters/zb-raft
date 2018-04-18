@@ -25,10 +25,23 @@ public class CandidateState extends ElectionState
 {
     protected final ConsensusRequestController voteController;
 
-    public CandidateState(Raft raft, ActorControl raftActor)
+    public CandidateState(Raft raft, ActorControl raftActor, int term)
     {
-        super(raft, raftActor);
-        voteController = new ConsensusRequestController(raft, raftActor, new VoteRequestHandler());
+        super(raft, raftActor, term);
+        voteController = new ConsensusRequestController(raft, raftActor, new VoteRequestHandler()
+        {
+            @Override
+            public void consensusGranted(Raft raft)
+            {
+                raft.becomeLeader(term);
+            }
+
+            @Override
+            public void consensusFailed(Raft raft)
+            {
+                raft.becomeFollower(term);
+            }
+        });
     }
 
     @Override
@@ -57,7 +70,7 @@ public class CandidateState extends ElectionState
         {
             heartbeat.updateLastHeartbeat();
             // received append request from new leader
-            raft.becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, appendRequest.getTerm());
+            raft.becomeFollower(appendRequest.getTerm());
         }
     }
 }

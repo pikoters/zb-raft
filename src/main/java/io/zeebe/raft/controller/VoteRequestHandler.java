@@ -18,11 +18,10 @@ package io.zeebe.raft.controller;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.protocol.VoteRequest;
 import io.zeebe.raft.protocol.VoteResponse;
-import io.zeebe.raft.state.RaftTranisiton;
 import io.zeebe.util.buffer.BufferWriter;
 import org.agrona.DirectBuffer;
 
-public class VoteRequestHandler implements ConsensusRequestHandler
+public abstract class VoteRequestHandler implements ConsensusRequestHandler
 {
     private final VoteRequest voteRequest = new VoteRequest();
     private final VoteResponse voteResponse = new VoteResponse();
@@ -55,18 +54,6 @@ public class VoteRequestHandler implements ConsensusRequestHandler
     {
         voteRequest.reset();
         voteResponse.reset();
-    }
-
-    @Override
-    public void consensusGranted(final Raft raft)
-    {
-        raft.becomeLeader(RaftTranisiton.CANDIDATE_TO_LEADER, raft.getTerm());
-    }
-
-    @Override
-    public void consensusFailed(final Raft raft)
-    {
-        raft.becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, raft.getTerm());
     }
 
 }

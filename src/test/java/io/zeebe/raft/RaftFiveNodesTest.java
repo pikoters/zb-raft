@@ -172,13 +172,14 @@ public class RaftFiveNodesTest
         final RaftRule newLeader = cluster.awaitLeader();
 
         position = newLeader.writeEvents("hello", "world");
-        cluster.awaitEventCommittedOnAll(position, newLeader.getTerm(), "world");
+        final int term = newLeader.getTerm();
+        cluster.awaitEventCommittedOnAll(position, term, "world");
 
         // and the old leader rejoins the cluster
         cluster.registerRaft(oldLeader);
 
         // then the new events are also committed on the old leader
-        cluster.awaitEventCommitted(oldLeader, position, newLeader.getTerm(), "world");
+        cluster.awaitEventCommitted(oldLeader, position, term, "world");
         cluster.awaitEventsCommittedOnAll("foo", "bar", "hello", "world");
     }
 

@@ -23,9 +23,9 @@ public abstract class ElectionState extends AbstractRaftState
 {
     private ScheduledTimer scheduledElection;
 
-    public ElectionState(Raft raft, ActorControl raftActor)
+    public ElectionState(Raft raft, ActorControl raftActor, int term)
     {
-        super(raft, raftActor);
+        super(raft, raftActor, term);
     }
 
     @Override

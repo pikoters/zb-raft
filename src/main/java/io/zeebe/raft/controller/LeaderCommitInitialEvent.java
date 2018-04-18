@@ -15,26 +15,25 @@
  */
 package io.zeebe.raft.controller;
 
-import java.time.Duration;
-
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.Loggers;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.event.InitialEvent;
 import io.zeebe.raft.state.LeaderState;
-import io.zeebe.raft.state.RaftState;
-import io.zeebe.servicecontainer.*;
+import io.zeebe.servicecontainer.Service;
+import io.zeebe.servicecontainer.ServiceStartContext;
+import io.zeebe.servicecontainer.ServiceStopContext;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import org.slf4j.Logger;
 
+import java.time.Duration;
+
 public class LeaderCommitInitialEvent implements Service<Void>
 {
     private static final Logger LOG = Loggers.RAFT_LOGGER;
     public static final Duration COMMIT_TIMEOUT = Duration.ofMinutes(15);
-
-    private final Injector<RaftState> leaderStateInjector = new Injector<>();
 
     private final LeaderState leaderState;
     private final ActorControl actor;
@@ -124,9 +123,4 @@ public class LeaderCommitInitialEvent implements Service<Void>
         return null;
     }
 
-
-    public Injector<RaftState> getLeaderStateInjector()
-    {
-        return leaderStateInjector;
-    }
 }

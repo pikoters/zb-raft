@@ -19,21 +19,26 @@ import io.zeebe.logstreams.log.BufferedLogStreamReader;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.raft.*;
 import io.zeebe.raft.protocol.*;
-import io.zeebe.servicecontainer.*;
+import io.zeebe.servicecontainer.Service;
+import io.zeebe.servicecontainer.ServiceStartContext;
+import io.zeebe.servicecontainer.ServiceStopContext;
 import io.zeebe.transport.RemoteAddress;
 import io.zeebe.transport.ServerOutput;
 import io.zeebe.util.sched.ActorControl;
-import io.zeebe.util.sched.channel.*;
+import io.zeebe.util.sched.channel.ChannelSubscription;
+import io.zeebe.util.sched.channel.ConcurrentQueueChannel;
+import io.zeebe.util.sched.channel.OneToOneRingBufferChannel;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.MessageHandler;
 
-public abstract class AbstractRaftState implements Service<RaftState>, MessageHandler
+public abstract class AbstractRaftState implements Service<AbstractRaftState>, MessageHandler
 {
     protected final Raft raft;
     protected final ActorControl raftActor;
     protected final BufferedLogStorageAppender appender;
     protected final LogStream logStream;
     protected final Heartbeat heartbeat;
+    private final int term;
     protected RaftMembers raftMembers;
 
     protected final ConfigurationResponse configurationResponse = new ConfigurationResponse();
@@ -55,10 +60,11 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
     protected final OneToOneRingBufferChannel messageBuffer;
     protected ChannelSubscription messageBufferSubscription;
 
-    public AbstractRaftState(final Raft raft, ActorControl raftActor)
+    public AbstractRaftState(final Raft raft, ActorControl raftActor, int term)
     {
         this.raft = raft;
         this.raftActor = raftActor;
+        this.term = term;
         this.requestQueue = raft.getRequestQueue();
         this.messageBuffer = raft.getMessageReceiveBuffer();
         this.logStream = raft.getLogStream();
@@ -150,9 +156,9 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
     public abstract RaftState getState();
 
     @Override
-    public RaftState get()
+    public AbstractRaftState get()
     {
-        return getState();
+        return this;
     }
 
     public void configurationRequest(final ServerOutput serverOutput, final RemoteAddress remoteAddress, final long requestId, final ConfigurationRequest configurationRequest)
@@ -294,5 +300,10 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
             .setSucceeded(false);
 
         raft.sendMessage(hasSocketAddress.getSocketAddress(), appendResponse);
+    }
+
+    public int getTerm()
+    {
+        return term;
     }
 }

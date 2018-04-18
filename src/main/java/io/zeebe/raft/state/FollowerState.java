@@ -26,11 +26,17 @@ public class FollowerState extends ElectionState
 {
     protected final ConsensusRequestController pollController;
 
-    public FollowerState(Raft raft, ActorControl raftActor)
+    public FollowerState(Raft raft, ActorControl raftActor, int term)
     {
-        super(raft, raftActor);
+        super(raft, raftActor, term);
         pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler()
         {
+            @Override
+            public void consensusGranted(Raft raft)
+            {
+                raft.becomeCandidate(term + 1);
+            }
+
             @Override
             public void consensusFailed(Raft raft)
             {

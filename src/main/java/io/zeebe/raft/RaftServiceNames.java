@@ -15,7 +15,7 @@
  */
 package io.zeebe.raft;
 
-import io.zeebe.raft.state.RaftState;
+import io.zeebe.raft.state.AbstractRaftState;
 import io.zeebe.servicecontainer.ServiceName;
 import io.zeebe.transport.SocketAddress;
 
@@ -51,18 +51,18 @@ public class RaftServiceNames
         return ServiceName.newServiceName(String.format("raft.leader.%s.%d.replicate.%s", raftName, term, follower), Void.class);
     }
 
-    public static ServiceName<RaftState> leaderServiceName(String raftName, int term)
+    public static ServiceName<AbstractRaftState> leaderServiceName(String raftName, int term)
     {
-        return ServiceName.newServiceName(String.format("raft.leader.%s.%d", raftName, term), RaftState.class);
+        return ServiceName.newServiceName(String.format("raft.leader.%s.%d", raftName, term), AbstractRaftState.class);
     }
 
-    public static ServiceName<RaftState> followerServiceName(String raftName, int term)
+    public static ServiceName<AbstractRaftState> followerServiceName(String raftName, int term)
     {
-        return ServiceName.newServiceName(String.format("raft.follower.%s.%d", raftName, term), RaftState.class);
+        return ServiceName.newServiceName(String.format("raft.follower.%s.%d", raftName, term), AbstractRaftState.class);
     }
 
-    public static ServiceName<RaftState> candidateServiceName(String raftName, int term)
+    public static ServiceName<AbstractRaftState> candidateServiceName(String raftName, int term)
     {
-        return ServiceName.newServiceName(String.format("raft.candidate.%s.%d", raftName, term), RaftState.class);
+        return ServiceName.newServiceName(String.format("raft.candidate.%s.%d", raftName, term), AbstractRaftState.class);
     }
 }
