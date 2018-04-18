@@ -63,11 +63,17 @@ public abstract class AbstractRaftState implements Service<RaftState>, MessageHa
         this.messageBuffer = raft.getMessageReceiveBuffer();
         this.logStream = raft.getLogStream();
         this.appender = new BufferedLogStorageAppender(raft);
-        this.appender.reset();
         this.heartbeat = raft.getHeartbeat();
         this.raftMembers = raft.getRaftMembers();
 
         reader = new BufferedLogStreamReader(logStream, true);
+
+        reset();
+    }
+
+    public void reset()
+    {
+        this.appender.reset();
     }
 
     @Override

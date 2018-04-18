@@ -57,7 +57,7 @@ public class CandidateState extends ElectionState
         {
             heartbeat.updateLastHeartbeat();
             // received append request from new leader
-            raft.becomeFollower();
+            raft.becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, appendRequest.getTerm());
         }
     }
 }

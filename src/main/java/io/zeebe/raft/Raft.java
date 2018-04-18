@@ -61,7 +61,12 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private final ClientTransport clientTransport;
 
     private ServiceName<?> currentStateServiceName;
+
+    // State Machine
     private RaftState state;
+    private RaftTranisiton transition;
+    private RaftTranisiton nextTransition;
+    private int nextTerm;
 
     // persistent state
     private LogStream logStream;
@@ -79,6 +84,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     private ServiceStartContext serviceContext;
 
     private String raftName;
+    private FollowerState currentStateService;
 
     public Raft(
         final String raftName,
@@ -128,13 +134,34 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     @Override
     protected void onActorStarted()
     {
-        becomeFollower();
+        state = null;
+        becomeFollower(RaftTranisiton.NEW_TO_FOLLOWER, getTerm());
     }
 
     // state transitions
 
-    public void becomeFollower()
+    public void becomeFollower(RaftTranisiton transitionToTake, int term)
     {
+        if (transition != null)
+        {
+            LOG.debug("Setting next transition {} ", transitionToTake);
+            nextTransition = transitionToTake;
+            nextTerm = term;
+            return;
+        }
+
+        if ((state == null && transitionToTake != RaftTranisiton.NEW_TO_FOLLOWER) ||
+            (state == RaftState.CANDIDATE && transitionToTake != RaftTranisiton.CANDIDATE_TO_FOLLOWER) ||
+            (state == RaftState.LEADER && transitionToTake != RaftTranisiton.LEADER_TO_FOLLOWER))
+        {
+            LOG.debug("Got invalid transition {} in state {}, ignoring", transitionToTake, state);
+            return;
+        }
+
+        LOG.debug("Taking transition {} ", transitionToTake);
+        transition = transitionToTake;
+        state = null;
+
         final ActorFuture<Void> whenPrevStateLeft;
 
         if (currentStateServiceName != null)
@@ -148,41 +175,78 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
         actor.runOnCompletion(whenPrevStateLeft, (v, t) ->
         {
-            final ServiceName<RaftState> followerServiceName = followerServiceName(raftName, getTerm());
-            final FollowerState followerState = new FollowerState(this, actor);
+            setTerm(term);
+            final ServiceName<RaftState> followerServiceName = followerServiceName(raftName, term);
+            currentStateService = new FollowerState(this, actor);
 
-            actor.runOnCompletion(serviceContext.createService(followerServiceName, followerState).install(), (v2, t2) ->
-            {
-                if (t2 == null)
-                {
-                    LOG.debug("Raft became follower in term {}", getTerm());
-                    this.state = RaftState.FOLLOWER;
-                    notifyRaftStateListeners();
-                }
-                else
-                {
-                    LOG.error("Failed to become follower", t2);
-                }
-            });
+            actor.runOnCompletion(serviceContext.createService(followerServiceName, currentStateService).install(), this::onBecomeFollower);
 
             currentStateServiceName = followerServiceName;
         });
     }
 
-    public void becomeCandidate()
+    private void onBecomeFollower(RaftState state, Throwable throwable)
     {
-        final int previousTerm = getTerm();
+        transition = null;
+
+        if (throwable == null)
+        {
+            this.state = RaftState.FOLLOWER;
+            LOG.debug("Raft became follower in term {}", getTerm());
+
+            if (nextTransition != null && nextTerm >= getTerm())
+            {
+                final RaftTranisiton transitionToTake = nextTransition;
+                final int nextTermToSet = this.nextTerm;
+                nextTransition = null;
+                nextTerm = -1;
+
+                switch (transitionToTake)
+                {
+                    case FOLLOWER_TO_CANDIDATE:
+                        becomeCandidate(RaftTranisiton.FOLLOWER_TO_CANDIDATE, nextTermToSet);
+                        break;
+
+                    default:
+                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
+                        notifyRaftStateListeners();
+                        break;
+                }
+            }
+            else
+            {
+                notifyRaftStateListeners();
+            }
+        }
+        else
+        {
+            LOG.error("Failed to become follower", throwable);
+        }
+    }
+
+    public void becomeCandidate(RaftTranisiton transitionToTake, int term)
+    {
+        if (transition != null)
+        {
+            LOG.debug("Setting next transition {} ", transitionToTake);
+            nextTransition = transitionToTake;
+            nextTerm = term;
+            return;
+        }
+
+        if (!(state == RaftState.FOLLOWER && transitionToTake == RaftTranisiton.FOLLOWER_TO_CANDIDATE))
+        {
+            LOG.debug("Got invalid transition {} in state {}, ignoring", transitionToTake, state);
+            return;
+        }
+
+        LOG.debug("Taking transition {} ", transitionToTake);
+        transition = transitionToTake;
+        state = null;
+
         actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
         {
-            final int currentTerm = getTerm();
-
-            if (previousTerm != currentTerm)
-            {
-                LOG.warn("Expected term {} but is {}, ignoring callback", previousTerm, currentTerm);
-                return;
-            }
-
-            final int nextTerm = currentTerm + 1;
+            final int nextTerm = term + 1;
             setTerm(nextTerm);
             setVotedFor(getSocketAddress());
 
@@ -193,29 +257,78 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 .dependency(joinServiceName(raftName))
                 .install();
 
-            actor.runOnCompletion(whenCandicate, (v2, t2) ->
-            {
-                if (t2 == null)
-                {
-                    LOG.debug("Raft became candidate in term {}", nextTerm);
-                    this.state = RaftState.CANDIDATE;
-                    notifyRaftStateListeners();
-                }
-                else
-                {
-                    LOG.error("Failed to become candidate", t2);
-                }
-            });
+            actor.runOnCompletion(whenCandicate, this::onBecomeCandiate);
 
             currentStateServiceName = candidateServiceName;
         });
     }
 
-    public void becomeLeader()
+    private void onBecomeCandiate(RaftState state, Throwable throwable)
     {
+        transition = null;
+
+        if (throwable == null)
+        {
+            this.state = RaftState.CANDIDATE;
+            LOG.debug("Raft became candidate in term {}", getTerm());
+
+            if (nextTransition != null && nextTerm >= getTerm())
+            {
+                final RaftTranisiton transitionToTake = nextTransition;
+                final int nextTermToSet = this.nextTerm;
+                nextTransition = null;
+                nextTerm = -1;
+
+                switch (transitionToTake)
+                {
+                    case CANDIDATE_TO_FOLLOWER:
+                        becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, nextTermToSet);
+                        break;
+
+                    case CANDIDATE_TO_LEADER:
+                        becomeLeader(RaftTranisiton.CANDIDATE_TO_LEADER, nextTermToSet);
+                        break;
+
+                    default:
+                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
+                        notifyRaftStateListeners();
+                        break;
+                }
+            }
+            else
+            {
+                notifyRaftStateListeners();
+            }
+        }
+        else
+        {
+            LOG.error("Failed to become candidate", throwable);
+        }
+    }
+
+    public void becomeLeader(RaftTranisiton transitionToTake, int term)
+    {
+        if (transition != null)
+        {
+            LOG.debug("Setting next transition {} ", transitionToTake);
+            nextTransition = transitionToTake;
+            nextTerm = term;
+            return;
+        }
+
+        if (!(state == RaftState.CANDIDATE && transitionToTake == RaftTranisiton.CANDIDATE_TO_LEADER))
+        {
+            LOG.debug("Got invalid transition {} in state {}, ignoring", transitionToTake, state);
+            return;
+        }
+
+        LOG.debug("Taking transition {} ", transitionToTake);
+        transition = transitionToTake;
+        state = null;
+
         actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
         {
-            final int term = getTerm();
+            setTerm(term);
 
             final ServiceName<Void> installOperationServiceName = leaderInstallServiceName(raftName, term);
             final ServiceName<RaftState> leaderServiceName = leaderServiceName(raftName, term);
@@ -248,24 +361,51 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                     .install();
             }
 
+            currentStateServiceName = installOperationServiceName;
+
             final ActorFuture<Void> whenLeader = installOperation.install();
 
-            actor.runOnCompletion(whenLeader, (v2, t2) ->
-            {
-                if (t2 == null)
-                {
-                    LOG.debug("Raft became leader in term {}", getTerm());
-                    this.state = RaftState.LEADER;
-                    notifyRaftStateListeners();
-                }
-                else
-                {
-                    LOG.error("Failed to become leader", t2);
-                }
-            });
-
-            currentStateServiceName = installOperationServiceName;
+            actor.runOnCompletion(whenLeader, this::onBecomeLeader);
         });
+    }
+
+    private void onBecomeLeader(Void aVoid, Throwable throwable)
+    {
+        transition = null;
+
+        if (throwable == null)
+        {
+            this.state = RaftState.LEADER;
+            LOG.debug("Raft became leader in term {}", getTerm());
+
+            if (nextTransition != null && nextTerm >= getTerm())
+            {
+                final RaftTranisiton transitionToTake = nextTransition;
+                final int nextTermToSet = this.nextTerm;
+                nextTransition = null;
+                nextTerm = -1;
+
+                switch (transitionToTake)
+                {
+                    case LEADER_TO_FOLLOWER:
+                        becomeFollower(RaftTranisiton.LEADER_TO_FOLLOWER, nextTermToSet);
+                        break;
+
+                    default:
+                        LOG.debug("Ignoring invalid transition {} in state {} ", transitionToTake, state);
+                        notifyRaftStateListeners();
+                        break;
+                }
+            }
+            else
+            {
+                notifyRaftStateListeners();
+            }
+        }
+        else
+        {
+            LOG.error("Failed to become leader", throwable);
+        }
     }
 
     // listeners
@@ -404,8 +544,43 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         if (currentTerm < messageTerm)
         {
             LOG.debug("Received message with higher term {} > {}", hasTerm.getTerm(), currentTerm);
-            setTerm(messageTerm);
-            becomeFollower();
+
+            if (state != null)
+            {
+                switch (state)
+                {
+                    case FOLLOWER:
+                        setTerm(messageTerm);
+                        currentStateService.reset();
+                        break;
+                    case CANDIDATE:
+                        becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, messageTerm);
+                        break;
+                    case LEADER:
+                        becomeFollower(RaftTranisiton.LEADER_TO_FOLLOWER, messageTerm);
+                        break;
+                }
+            }
+            else
+            {
+                switch (transition)
+                {
+                    case LEADER_TO_FOLLOWER:
+
+                        break;
+                    case NEW_TO_FOLLOWER:
+                    case CANDIDATE_TO_FOLLOWER:
+                        setTerm(messageTerm);
+                        currentStateService.reset();
+                        break;
+                    case CANDIDATE_TO_LEADER:
+                        becomeFollower(RaftTranisiton.LEADER_TO_FOLLOWER, messageTerm);
+                        break;
+                    case FOLLOWER_TO_CANDIDATE:
+                        becomeFollower(RaftTranisiton.CANDIDATE_TO_FOLLOWER, messageTerm);
+                        break;
+                }
+            }
 
             return true;
         }

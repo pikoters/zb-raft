@@ -18,6 +18,7 @@ package io.zeebe.raft.controller;
 import io.zeebe.raft.Raft;
 import io.zeebe.raft.protocol.PollRequest;
 import io.zeebe.raft.protocol.PollResponse;
+import io.zeebe.raft.state.RaftTranisiton;
 import io.zeebe.util.buffer.BufferWriter;
 import org.agrona.DirectBuffer;
 
@@ -62,7 +63,7 @@ public class PollRequestHandler implements ConsensusRequestHandler
     @Override
     public void consensusGranted(final Raft raft)
     {
-        raft.becomeCandidate();
+        raft.becomeCandidate(RaftTranisiton.FOLLOWER_TO_CANDIDATE, raft.getTerm());
     }
 
     @Override
