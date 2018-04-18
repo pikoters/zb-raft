@@ -52,7 +52,7 @@ public class RaftThreeNodesTest
         cluster.awaitRaftEventCommittedOnAll(leader.getTerm());
 
         final List<RaftState> raftStateChanges = leader.getRaftStateChanges();
-        assertThat(raftStateChanges).containsExactly(RaftState.FOLLOWER, RaftState.CANDIDATE, RaftState.LEADER);
+        assertThat(raftStateChanges).containsSequence(RaftState.CANDIDATE, RaftState.LEADER);
     }
 
     @Test
@@ -188,7 +188,7 @@ public class RaftThreeNodesTest
         cluster.awaitEventsCommittedOnAll("foo", "bar", "hello", "world");
 
         final List<RaftState> raftStateChanges = oldLeader.getRaftStateChanges();
-        assertThat(raftStateChanges).containsExactly(RaftState.FOLLOWER, RaftState.CANDIDATE, RaftState.LEADER, RaftState.FOLLOWER);
+        assertThat(raftStateChanges).containsSequence(RaftState.CANDIDATE, RaftState.LEADER, RaftState.FOLLOWER);
     }
 
     @Test
