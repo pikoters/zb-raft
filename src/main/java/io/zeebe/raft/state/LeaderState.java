@@ -36,9 +36,9 @@ public class LeaderState extends AbstractRaftState
     private boolean initialEventCommitted = false;
     private long initialEventPosition = -1;
 
-    public LeaderState(Raft raft, ActorControl raftActor, int term)
+    public LeaderState(Raft raft, ActorControl raftActor)
     {
-        super(raft, raftActor, term);
+        super(raft, raftActor);
         this.configurationChangeController = new AppendRaftEventController(raft, raftActor);
     }
 

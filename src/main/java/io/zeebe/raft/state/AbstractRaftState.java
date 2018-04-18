@@ -38,7 +38,6 @@ public abstract class AbstractRaftState implements Service<AbstractRaftState>, M
     protected final BufferedLogStorageAppender appender;
     protected final LogStream logStream;
     protected final Heartbeat heartbeat;
-    private final int term;
     protected RaftMembers raftMembers;
 
     protected final ConfigurationResponse configurationResponse = new ConfigurationResponse();
@@ -60,11 +59,10 @@ public abstract class AbstractRaftState implements Service<AbstractRaftState>, M
     protected final OneToOneRingBufferChannel messageBuffer;
     protected ChannelSubscription messageBufferSubscription;
 
-    public AbstractRaftState(final Raft raft, ActorControl raftActor, int term)
+    public AbstractRaftState(final Raft raft, ActorControl raftActor)
     {
         this.raft = raft;
         this.raftActor = raftActor;
-        this.term = term;
         this.requestQueue = raft.getRequestQueue();
         this.messageBuffer = raft.getMessageReceiveBuffer();
         this.logStream = raft.getLogStream();
@@ -300,10 +298,5 @@ public abstract class AbstractRaftState implements Service<AbstractRaftState>, M
             .setSucceeded(false);
 
         raft.sendMessage(hasSocketAddress.getSocketAddress(), appendResponse);
-    }
-
-    public int getTerm()
-    {
-        return term;
     }
 }
