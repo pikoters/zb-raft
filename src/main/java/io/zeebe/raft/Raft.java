@@ -89,6 +89,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
     private String raftName;
     private AbstractRaftState state;
+    private RaftJoinService raftJoinedService;
 
     public Raft(
         final String raftName,
@@ -122,7 +123,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
         this.serviceContext = startContext;
 
-        final RaftJoinService raftJoinedService = new RaftJoinService(this, actor);
+        raftJoinedService = new RaftJoinService(this, actor);
         serviceContext.createService(joinServiceName(raftName), raftJoinedService)
             .install();
 
@@ -454,6 +455,11 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         {
             LOG.debug("Cannot set term to smaller value {} < {}", term, currentTerm);
         }
+    }
+
+    public boolean isJoined()
+    {
+        return raftJoinedService.isJoined();
     }
 
     /**

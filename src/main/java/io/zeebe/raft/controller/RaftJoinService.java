@@ -207,4 +207,8 @@ public class RaftJoinService implements Service<Void>
         return null;
     }
 
+    public boolean isJoined()
+    {
+        return whenJoinCompleted.isDone() && !whenJoinCompleted.isCompletedExceptionally();
+    }
 }

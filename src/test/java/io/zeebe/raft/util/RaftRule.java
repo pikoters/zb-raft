@@ -300,6 +300,11 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         return getState() == LEADER;
     }
 
+    public boolean isJoined()
+    {
+        return raft.isJoined();
+    }
+
     public EventInfo writeEvent(final String message)
     {
         writer.wrap(logStream);

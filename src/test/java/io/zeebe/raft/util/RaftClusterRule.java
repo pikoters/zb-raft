@@ -154,6 +154,12 @@ public class RaftClusterRule implements TestRule
         awaitCondition(() -> raft.getState() == state, "Failed to wait for %s to become %s", raft, state);
     }
 
+    public void awaitAllJoined()
+    {
+        awaitCondition(() -> rafts.stream().allMatch(RaftRule::isJoined), ALL_COMMITTED_RETRIES,
+            "Failed to wait for all rafts to join");
+    }
+
     public void awaitEventCommitted(final RaftRule raftToWait, final EventInfo eventInfo)
     {
         awaitCondition(() -> raftToWait.eventCommitted(eventInfo), COMMITTED_RETRIES,
@@ -197,6 +203,9 @@ public class RaftClusterRule implements TestRule
 
     public RaftRule awaitLeader()
     {
+        // ensure that all members joined the cluster before continuing
+        awaitAllJoined();
+
         return awaitCondition(() -> rafts.stream().filter(RaftRule::isLeader).findAny(), ALL_COMMITTED_RETRIES,
             "Failed to wait for a node to become leader in the cluster");
     }
