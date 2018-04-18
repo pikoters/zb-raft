@@ -147,31 +147,19 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
     public void becomeFollower(final int term)
     {
         final Transition transition = new Transition(TO_FOLLOWER, term);
-
-        if (shouldTakeTransition(transition))
-        {
-            leaveState(this::transitionToFollower);
-        }
+        mayTakeTransition(transition, this::transitionToFollower);
     }
 
     public void becomeCandidate(final int term)
     {
         final Transition transition = new Transition(TO_CANDIDATE, term);
-
-        if (shouldTakeTransition(transition))
-        {
-            leaveState(this::transitionToCandidate);
-        }
+        mayTakeTransition(transition, this::transitionToCandidate);
     }
 
     public void becomeLeader(final int term)
     {
         final Transition transition = new Transition(TO_LEADER, term);
-
-        if (shouldTakeTransition(transition))
-        {
-            leaveState(this::transitionToLeader);
-        }
+        mayTakeTransition(transition, this::transitionToLeader);
     }
 
     private void transitionToFollower(final Void value, final Throwable throwable)
@@ -258,7 +246,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         currentStateServiceName = installOperationServiceName;
     }
 
-    private boolean shouldTakeTransition(final Transition transition)
+    private void mayTakeTransition(final Transition transition, final BiConsumer<Void, Throwable> whenLeftCallback)
     {
         if (currentTransition != null)
         {
@@ -267,18 +255,16 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 nextTransition = transition;
                 LOG.debug("Setting next transition {} during transition {} from state {}", nextTransition, currentTransition, getState());
             }
-            return false;
         }
         else if (!transition.isValid(getState(), getTerm()))
         {
             LOG.warn("Ignoring invalid transition {} in state {} and term {}", transition, getState(), getTerm());
-            return false;
         }
         else
         {
             currentTransition = transition;
             LOG.debug("Taking transition {} from state {}", transition, getState());
-            return true;
+            leaveState(whenLeftCallback);
         }
     }
 
