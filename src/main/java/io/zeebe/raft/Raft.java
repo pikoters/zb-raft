@@ -173,6 +173,14 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         final ServiceName<AbstractRaftState> followerServiceName = followerServiceName(raftName, term);
         final FollowerState followerState = new FollowerState(this, actor);
 
+        final ServiceName<Void> pollServiceName = pollServiceName(raftName, term);
+        final RaftPollService pollService = new RaftPollService(this, actor);
+
+        serviceContext.createService(pollServiceName, pollService)
+                      .dependency(joinServiceName(raftName))
+                      .dependency(followerServiceName)
+                      .install();
+
         final ActorFuture<AbstractRaftState> installFuture = serviceContext.createService(followerServiceName, followerState).install();
 
         actor.runOnCompletion(installFuture, this::onStateTransitionCompleted);

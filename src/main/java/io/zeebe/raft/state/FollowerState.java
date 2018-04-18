@@ -17,28 +17,16 @@ package io.zeebe.raft.state;
 
 import io.zeebe.logstreams.impl.LoggedEventImpl;
 import io.zeebe.raft.Raft;
-import io.zeebe.raft.controller.ConsensusRequestController;
-import io.zeebe.raft.controller.PollRequestHandler;
 import io.zeebe.raft.protocol.AppendRequest;
-import io.zeebe.util.sched.*;
+import io.zeebe.util.sched.ActorControl;
+import io.zeebe.util.sched.ActorPriority;
+import io.zeebe.util.sched.SchedulingHints;
 
-public class FollowerState extends ElectionState
+public class FollowerState extends AbstractRaftState
 {
-    protected final ConsensusRequestController pollController;
-
     public FollowerState(Raft raft, ActorControl raftActor)
     {
         super(raft, raftActor);
-        pollController = new ConsensusRequestController(raft, raftActor, new PollRequestHandler()
-        {
-
-            @Override
-            public void consensusFailed(final Raft raft)
-            {
-                super.consensusFailed(raft);
-                scheduleElectionTimer();
-            }
-        });
     }
 
     @Override
@@ -58,14 +46,7 @@ public class FollowerState extends ElectionState
     protected void onLeaveState()
     {
         raftActor.setSchedulingHints(SchedulingHints.cpuBound(ActorPriority.REGULAR));
-        pollController.close();
         super.onLeaveState();
-    }
-
-    @Override
-    protected void onElectionTimeout()
-    {
-        pollController.sendRequest();
     }
 
     @Override

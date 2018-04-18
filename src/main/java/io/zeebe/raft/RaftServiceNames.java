@@ -61,6 +61,11 @@ public class RaftServiceNames
         return ServiceName.newServiceName(String.format("raft.follower.%s.%d", raftName, term), AbstractRaftState.class);
     }
 
+    public static ServiceName<Void> pollServiceName(String raftName, int term)
+    {
+        return ServiceName.newServiceName(String.format("raft.follower.%s.%d.pollService", raftName, term), Void.class);
+    }
+
     public static ServiceName<AbstractRaftState> candidateServiceName(String raftName, int term)
     {
         return ServiceName.newServiceName(String.format("raft.candidate.%s.%d", raftName, term), AbstractRaftState.class);

@@ -80,6 +80,8 @@ public class RaftJoinService implements Service<Void>
         final Runnable onJoined = () ->
         {
             LOG.info("Joined raft in term {}", raft.getTerm());
+            // set initial heartbeat as we received a message from the leader
+            raft.getHeartbeat().updateLastHeartbeat();
             whenJoinCompleted.complete(null);
         };
 

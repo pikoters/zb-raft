@@ -21,7 +21,7 @@ import io.zeebe.raft.controller.VoteRequestHandler;
 import io.zeebe.raft.protocol.AppendRequest;
 import io.zeebe.util.sched.ActorControl;
 
-public class CandidateState extends ElectionState
+public class CandidateState extends AbstractRaftState
 {
     protected final ConsensusRequestController voteController;
 
@@ -38,16 +38,17 @@ public class CandidateState extends ElectionState
     }
 
     @Override
+    protected void onEnterState()
+    {
+        super.onEnterState();
+        voteController.sendRequest();
+    }
+
+    @Override
     protected void onLeaveState()
     {
         voteController.close();
         super.onLeaveState();
-    }
-
-    @Override
-    protected void onElectionTimeout()
-    {
-        voteController.sendRequest();
     }
 
     @Override
