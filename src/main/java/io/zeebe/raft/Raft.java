@@ -243,10 +243,10 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         transition = newTransition;
         LOG.debug("Taking transition {} from {} ", transition, getState());
 
-        state = null;
 
         actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
         {
+            state = null;
             setTerm(term);
             setVotedFor(getSocketAddress());
 
@@ -326,10 +326,9 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
         transition = newTransition;
         LOG.debug("Taking transition {} from {} ", transition, getState());
 
-        state = null;
-
         actor.runOnCompletion(serviceContext.removeService(currentStateServiceName), (v, t) ->
         {
+            state = null;
 
             final ServiceName<Void> installOperationServiceName = leaderInstallServiceName(raftName, term);
             final ServiceName<AbstractRaftState> leaderServiceName = leaderServiceName(raftName, term);
@@ -342,14 +341,14 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
                 .install();
 
             final LeaderState leaderState = new LeaderState(this, actor);
-            final ActorFuture<AbstractRaftState> leaderFuture = installOperation.createService(leaderServiceName, leaderState)
+            installOperation.createService(leaderServiceName, leaderState)
                 .dependency(LogStreamServiceNames.logWriteBufferServiceName(logStream.getLogName()))
                 .dependency(openLogStreamServiceName)
                 .dependency(joinServiceName(raftName))
                 .install();
 
             final LeaderCommitInitialEvent leaderCommitInitialEventService = new LeaderCommitInitialEvent(this, actor, leaderState);
-            installOperation.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
+            serviceContext.createService(initialEventCommittedServiceName, leaderCommitInitialEventService)
                 .dependency(leaderServiceName)
                 .install();
 
@@ -366,7 +365,7 @@ public class Raft extends Actor implements ServerMessageHandler, ServerRequestHa
 
             final ActorFuture<Void> whenLeader = installOperation.install();
 
-            actor.runOnCompletion(leaderFuture, ((aVoid, throwable) -> onBecomeLeader(leaderState, throwable)));
+            actor.runOnCompletion(whenLeader, ((aVoid, throwable) -> onBecomeLeader(leaderState, throwable)));
         });
     }
 
