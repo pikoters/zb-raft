@@ -154,16 +154,16 @@ public class RaftClusterRule implements TestRule
         awaitCondition(() -> raft.getState() == state, "Failed to wait for %s to become %s", raft, state);
     }
 
-    public void awaitEventCommitted(final RaftRule raftToWait, final long position, final int term, final String message)
+    public void awaitEventCommitted(final RaftRule raftToWait, final EventInfo eventInfo)
     {
-        awaitCondition(() -> raftToWait.eventCommitted(position, term, message), COMMITTED_RETRIES,
-            "Failed to wait for commit of event %d/%d with message on raft %s", position, term, message, raftToWait);
+        awaitCondition(() -> raftToWait.eventCommitted(eventInfo), COMMITTED_RETRIES,
+            "Failed to wait for commit of event %s with message on raft %s", eventInfo, raftToWait);
     }
 
-    public void awaitEventCommittedOnAll(final long position, final int term, final String message)
+    public void awaitEventCommittedOnAll(final EventInfo eventInfo)
     {
-        awaitCondition(() -> rafts.stream().allMatch(raft -> raft.eventCommitted(position, term, message)), ALL_COMMITTED_RETRIES,
-            "Failed to wait for commit of event %d/%d with message on all rafts", position, term, message);
+        awaitCondition(() -> rafts.stream().allMatch(raft -> raft.eventCommitted(eventInfo)), ALL_COMMITTED_RETRIES,
+            "Failed to wait for commit of event %s with message on all rafts", eventInfo);
     }
 
     public void awaitEventsCommittedOnAll(final String... messages)
@@ -172,10 +172,10 @@ public class RaftClusterRule implements TestRule
             "Failed to wait for events %s to be commit on all rafts", Arrays.asList(messages));
     }
 
-    public void awaitEventAppendedOnAll(final long position, final int term, final String message)
+    public void awaitEventAppendedOnAll(final EventInfo eventInfo)
     {
-        awaitCondition(() -> rafts.stream().allMatch(raft -> raft.eventAppended(position, term, message)), ALL_COMMITTED_RETRIES,
-            "Failed to wait for commit of event %d/%d with message on all rafts", position, term, message);
+        awaitCondition(() -> rafts.stream().allMatch(raft -> raft.eventAppended(eventInfo)), ALL_COMMITTED_RETRIES,
+            "Failed to wait for commit of event %s with message on all rafts", eventInfo);
     }
 
     public void awaitInitialEventCommittedOnAll(final int term)

@@ -300,12 +300,11 @@ public class RaftRule extends ExternalResource implements RaftStateListener
         return getState() == LEADER;
     }
 
-    public long writeEvent(final String message)
+    public EventInfo writeEvent(final String message)
     {
-
-        final long[] writtenPosition = new long[1];
-
         writer.wrap(logStream);
+
+        final EventInfo[] eventInfo = new EventInfo[1];
 
         final DirectBuffer value = wrapString(message);
 
@@ -314,7 +313,7 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                 {
                     if (position != null && position >= 0)
                     {
-                        writtenPosition[0] = position;
+                        eventInfo[0] = new EventInfo(position, raft.getTerm(), message);
                         return true;
                     }
                     else
@@ -323,41 +322,39 @@ public class RaftRule extends ExternalResource implements RaftStateListener
                     }
                 }, "Failed to write event with message {}", message);
 
-        return writtenPosition[0];
+        return eventInfo[0];
     }
 
-    public long writeEvents(final String... messages)
+    public EventInfo writeEvents(final String... messages)
     {
-        long position = 0;
+        EventInfo eventInfo = null;
 
         for (final String message : messages)
         {
-            position = writeEvent(message);
+            eventInfo = writeEvent(message);
         }
 
-        return position;
+        return eventInfo;
     }
 
-    public boolean eventAppended(final long position, final int term, final String message)
+    public boolean eventAppended(final EventInfo eventInfo)
     {
-        uncommittedReader.seek(position);
+        uncommittedReader.seek(eventInfo.getPosition());
 
         if (uncommittedReader.hasNext())
         {
-            final LoggedEvent event = uncommittedReader.next();
-            final String value = bufferAsString(event.getValueBuffer(), event.getValueOffset(), event.getValueLength());
-
-            return event.getPosition() == position && event.getRaftTerm() == term && message.equals(value);
+            final EventInfo event = new EventInfo(uncommittedReader.next());
+            return event.equals(eventInfo);
         }
 
         return false;
     }
 
-    public boolean eventCommitted(final long position, final int term, final String message)
+    public boolean eventCommitted(final EventInfo eventInfo)
     {
-        final boolean isCommitted = logStream.getCommitPosition() >= position;
+        final boolean isCommitted = logStream.getCommitPosition() >= eventInfo.getPosition();
 
-        return isCommitted && eventAppended(position, term, message);
+        return isCommitted && eventAppended(eventInfo);
     }
 
     public boolean eventsCommitted(final String... messages)
