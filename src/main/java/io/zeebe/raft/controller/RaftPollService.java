@@ -83,7 +83,7 @@ public class RaftPollService implements Service<Void>
     {
         if (raft.getMemberSize() == 0)
         {
-            raftActor.submit(this::electionTimeoutCallback);
+            onElectionTimeout();
         }
         else
         {
