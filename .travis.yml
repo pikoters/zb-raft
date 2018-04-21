@@ -7,3 +7,6 @@ jdk: oraclejdk8
 branches:
     only:
         - master
+
+after_failure:
+    - cat /home/travis/build/zeebe-io/zb-raft/target/surefire-reports/*
