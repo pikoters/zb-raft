@@ -9,4 +9,4 @@ branches:
         - master
 
 after_failure:
-    - cat /home/travis/build/zeebe-io/zb-raft/target/surefire-reports/*
+    - tail -vn +1 target/surefire-reports/*
