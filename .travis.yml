@@ -4,3 +4,6 @@ jdk: oraclejdk8
 branches:
     only:
         - master
+
+before_script:
+    - java -XX:+PrintFlagsFinal -version | grep HeapSize
