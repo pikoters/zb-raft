@@ -12,4 +12,6 @@ before_script:
     - ulimit -c unlimited -S
 
 after_failure:
+    - ls
+    - find . -iname hs_err_pid*
     - tail -vn +1 target/surefire-reports/*
