@@ -8,5 +8,8 @@ branches:
     only:
         - master
 
+before_script:
+    - ulimit -c unlimited -S
+
 after_failure:
     - tail -vn +1 target/surefire-reports/*
